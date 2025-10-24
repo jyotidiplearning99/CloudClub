@@ -1,0 +1,22 @@
+JESUS RODRIGUEZ
+Senior Salesforce Developer
+jesus@example.com
+
+EXPERIENCE
+Arcadia (2020-Present)
+- Senior Salesforce Developer
+- Worked on Sales Cloud and Service Cloud
+- Clients: Cloud Club (Sales Cloud, Experience Cloud), Finales (CPQ, Informatica)
+
+SKILLS
+Salesforce: Sales Cloud, Service Cloud, CPQ, Apex, Lightning Web Components
+Other: Python, JavaScript, AWS
+
+CERTIFICATIONS
+Salesforce Certified Platform Developer I
+
+LOCATION
+Buenos Aires, Argentina
+
+SALESFORCE EXPERIENCE
+Started with Salesforce in 2018
