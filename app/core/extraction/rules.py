@@ -1,275 +1,543 @@
 """
-Normalization rules for resume data.
-
-
-- Title case all proper nouns
-- Normalize Salesforce product names
-- Format locations correctly
-- Calculate SFDC years properly
+POST-PARSE rules with COMPREHENSIVE product support and vendor classification.
 """
 
-from datetime import datetime
 from typing import Dict, List
+import re
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
+# ============ COMPREHENSIVE VENDOR LIST ============
+KNOWN_VENDOR_NAMES = {
+    # Top tier consulting
+    "accenture", "deloitte", "capgemini", "cognizant", "infosys", "wipro", 
+    "tcs", "tata consultancy", "hcl", "tech mahindra",
+    
+    # Salesforce-focused vendors
+    "osf digital", "osf global", "osf global services", "cloudnerd", "cloud nerd", 
+    "genisis", "genisis technology", "genisis technology solutions", "relevantz", 
+    "guerratech", "guerra tech",
+    
+    # Staffing/consulting firms
+    "teksystems", "tek systems", "v-soft", "vsoft", "v-soft consulting",
+    "zensar", "zensar technologies", "quinnox", "fortech",
+    
+    # Regional vendors
+    "kcsit", "machinas", "machinas ecommerce", "soitron", "wunderman", 
+    "wunderman thompson", "wunderman thompson commerce", "globant",
+    "sysmap", "sysmap solutions",
+    
+    # Generic patterns
+    "consulting", "consultancy", "staffing", "solutions inc",
+    "technology solutions", "tech solutions"
+}
+
+VENDOR_INDICATORS = [
+    "consulting", "consultancy", "staffing", "solutions", "services",
+    "technologies", "technology", "tech", "global services"
+]
+
+
+# ============ EXPANDED SALESFORCE PRODUCTS ============
+SALESFORCE_PRODUCTS_CANONICAL = {
+    # Core Clouds
+    "Sales Cloud", "Service Cloud", "Experience Cloud", "Marketing Cloud",
+    "Commerce Cloud", "CPQ",
+    
+    # Industry Clouds (EXPANDED)
+    "Financial Services Cloud", "Health Cloud", "Communications Cloud",
+    "Energy Cloud", "Media Cloud", "Automotive Cloud", 
+    "Education Cloud", "Nonprofit Cloud", "Manufacturing Cloud",
+    "Consumer Goods Cloud", "Public Sector Cloud",
+    
+    # Data & Analytics
+    "Data Cloud", "Tableau CRM", "Revenue Cloud",
+    
+    # Other
+    "Field Service", "Industries Cloud", 
+    "Marketing Cloud Account Engagement"
+}
+
+# ============ EXPANDED PRODUCT ALIASES ============
 PRODUCT_ALIASES = {
-    # Sales Cloud variants
+    # Core Clouds
     "sales cloud": "Sales Cloud",
-    "sfdc sales": "Sales Cloud",
-    "crm core": "Sales Cloud",
-    "salesforce crm": "Sales Cloud",
-    "sales force cloud": "Sales Cloud",
-    
-    # Service Cloud variants
     "service cloud": "Service Cloud",
-    "sfdc service": "Service Cloud",
-    
-    # CPQ variants
     "cpq": "CPQ",
-    "revenue cloud": "CPQ",
-    "apttus cpq": "CPQ",
     "salesforce cpq": "CPQ",
-    "steelbrick": "CPQ",
-    
-    # Experience Cloud variants
-    "experience cloud": "Experience Cloud",
-    "communities": "Experience Cloud",
-    "community cloud": "Experience Cloud",
-    
-    # Marketing Cloud variants
     "marketing cloud": "Marketing Cloud",
     "sfmc": "Marketing Cloud",
-    "exacttarget": "Marketing Cloud",
-    "pardot": "Marketing Cloud Account Engagement",
-    "marketing cloud account engagement": "Marketing Cloud Account Engagement",
+    "experience cloud": "Experience Cloud",
+    "communities": "Experience Cloud",
+    "community": "Experience Cloud",
+    "community cloud": "Experience Cloud",
+    "commerce cloud": "Commerce Cloud",
+    "b2b commerce": "Commerce Cloud",
+    "b2c commerce": "Commerce Cloud",
+    "lightning b2b commerce": "Commerce Cloud",
     
-    # Financial Services Cloud
+    # Industry Clouds (EXPANDED)
     "financial services cloud": "Financial Services Cloud",
     "fsc": "Financial Services Cloud",
-    
-    # Health Cloud
     "health cloud": "Health Cloud",
+    "communications cloud": "Communications Cloud",
+    "communication cloud": "Communications Cloud",  # Handle typo
+    "energy cloud": "Energy Cloud",
+    "media cloud": "Media Cloud",
+    "automotive cloud": "Automotive Cloud",
+    "education cloud": "Education Cloud",
+    "nonprofit cloud": "Nonprofit Cloud",
+    "manufacturing cloud": "Manufacturing Cloud",
+    "consumer goods cloud": "Consumer Goods Cloud",
+    "public sector cloud": "Public Sector Cloud",
     
-    # Data Cloud
+    # Data & Analytics
     "data cloud": "Data Cloud",
-    
-    # Tableau CRM / Einstein Analytics
+    "revenue cloud": "Revenue Cloud",
     "tableau crm": "Tableau CRM",
+    "wave analytics": "Tableau CRM",
     "einstein analytics": "Tableau CRM",
     
-    # Industries Cloud
-    "industries cloud": "Industries Cloud",
-    
-    # Field Service
+    # Other
     "field service": "Field Service",
     "field service lightning": "Field Service",
-    
-    # Commerce Cloud
-    "commerce cloud": "Commerce Cloud",
-    "demandware": "Commerce Cloud",
+    "industries cloud": "Industries Cloud",
+    "vlocity": "Industries Cloud",
+    "pardot": "Marketing Cloud Account Engagement",
+    "marketing cloud account engagement": "Marketing Cloud Account Engagement"
 }
 
 
-def normalize_product(product: str) -> str:
-    """
-    Normalize Salesforce product name to canonical form.
+def is_vendor_name(company_name: str) -> bool:
+    """Enhanced vendor detection with multiple checks."""
+    if not company_name:
+        return False
     
-    Args:
-        product: Product name from resume
+    name_lower = company_name.lower().strip()
+    
+    # Check 1: Exact match
+    if name_lower in KNOWN_VENDOR_NAMES:
+        logger.info("vendor_detected_exact_match", company=company_name)
+        return True
+    
+    # Check 2: Partial match
+    for vendor in KNOWN_VENDOR_NAMES:
+        if vendor in name_lower or name_lower in vendor:
+            logger.info("vendor_detected_partial_match", company=company_name, matched_vendor=vendor)
+            return True
+    
+    # Check 3: Keyword indicators
+    for indicator in VENDOR_INDICATORS:
+        if indicator in name_lower:
+            logger.info("vendor_detected_keyword", company=company_name, keyword=indicator)
+            return True
+    
+    return False
+
+
+def normalize_company_name(name: str) -> str:
+    """Normalize company names for consistency."""
+    if not name:
+        return name
+    
+    normalizations = {
+        # Vendors
+        "teksystems": "TEKsystems",
+        "tek systems": "TEKsystems",
+        "v-soft consulting": "V-Soft Consulting",
+        "vsoft": "V-Soft Consulting",
+        "osf digital": "OSF Digital",
+        "osf global": "OSF Global Services",
+        "osf global services": "OSF Global Services",
+        "zensar technologies": "Zensar Technologies",
+        "cloudnerd": "CloudNerd",
+        "cloud nerd": "CloudNerd",
+        "cognizant": "Cognizant",
+        "genisis": "Genisis Technology Solutions",
+        "genisis technology solutions": "Genisis Technology Solutions",
+        "globant": "Globant",
+        "sysmap solutions": "SysMap Solutions",
+        "wunderman thompson commerce": "Wunderman Thompson Commerce",
         
-    Returns:
-        Canonical product name
-    """
+        # Clients
+        "t.rowe price": "T. Rowe Price",
+        "t rowe price": "T. Rowe Price",
+        "ford motors": "Ford Motor Company",
+        "ford motor company": "Ford Motor Company",
+        "ypo, inc": "YPO, Inc",
+        "te connectivity": "TE Connectivity",
+        "coca-cola": "Coca-Cola Enterprises",
+        "coca-cola enterprises": "Coca-Cola Enterprises"
+    }
+    
+    name_lower = name.lower().strip()
+    if name_lower in normalizations:
+        return normalizations[name_lower]
+    
+    # Remove country suffixes like (Brazil), (England)
+    name = re.sub(r'\s*\([^)]+\)\s*$', '', name)
+    
+    return name.title().strip()
+
+
+def normalize_product(product: str) -> str | None:
+    """Normalize product to canonical form with expanded support."""
     if not product:
-        return product
+        return None
     
     product_lower = product.lower().strip()
-    normalized = PRODUCT_ALIASES.get(product_lower, product.title())
     
-    return normalized
+    # Remove common prefixes
+    product_lower = re.sub(r'^salesforce\s+', '', product_lower)
+    
+    if product_lower in PRODUCT_ALIASES:
+        canonical = PRODUCT_ALIASES[product_lower]
+        return canonical if canonical in SALESFORCE_PRODUCTS_CANONICAL else None
+    
+    # Filter out tools (not Salesforce products)
+    tool_keywords = [
+        "copado", "flosum", "gearset", "mulesoft", "aws", "azure", 
+        "dataloader", "informatica", "jitterbit", "genesys", "marketo",
+        "adobe", "sap", "oracle", "advantage crm", "dynamics",
+        "own backup", "ownbackup", "ant migration"
+    ]
+    if any(tool in product_lower for tool in tool_keywords):
+        return None
+    
+    return None
 
 
-def normalize_location(location: str) -> str:
-    """
+def classify_and_filter(data: dict) -> dict:
+    """Enhanced: Classify companies, filter vendors, and ACCUMULATE them."""
     
-    - US: "City, ST"
-    - International: "City, Country"
+    # NEW: ACCUMULATE filtered vendors (don't replace if already exists)
+    if "_filtered_vendors" not in data:
+        data["_filtered_vendors"] = []
     
-    Remove ZIP codes, street addresses, full state names.
+    filtered_vendors_this_call = set()
     
-    Args:
-        location: Raw location string
+    for exp in data.get("experiences", []):
+        # Filter products
+        original_products = exp.get("products", [])
+        filtered_products = []
+        for p in original_products:
+            canonical = normalize_product(p)
+            if canonical and canonical not in filtered_products:
+                filtered_products.append(canonical)
+        exp["products"] = filtered_products
         
-    Returns:
-        Normalized location
-    """
+        # Filter client_projects - ENHANCED LOGIC
+        valid_projects = []
+        for project in exp.get("client_projects", []):
+            client_name = project.get("project_end_client_name", "")
+            client_lower = client_name.lower()
+            
+            # ENHANCED: Detect vendors and collect them
+            if any(vendor in client_lower for vendor in KNOWN_VENDOR_NAMES):
+                # ADD to filtered vendors collection
+                normalized_vendor = normalize_company_name(client_name)
+                filtered_vendors_this_call.add(normalized_vendor)
+                
+                logger.warning("vendor_filtered_from_client_projects", 
+                              vendor=client_name,
+                              experience_company=exp.get("company_name") or exp.get("vendor_consulting_firm"))
+                continue
+            
+            # Filter COE/internal projects
+            if "coe" in client_lower:
+                logger.warning("internal_project_filtered", project=client_name)
+                continue
+            
+            # Normalize client name
+            project["project_end_client_name"] = normalize_company_name(client_name)
+            
+            # Normalize via_vendor
+            if project.get("via_vendor"):
+                project["via_vendor"] = normalize_company_name(project["via_vendor"])
+            
+            # Filter project products
+            project_products = []
+            for p in project.get("products", []):
+                canonical = normalize_product(p)
+                if canonical and canonical not in project_products:
+                    project_products.append(canonical)
+            project["products"] = project_products
+            
+            valid_projects.append(project)
+        
+        exp["client_projects"] = valid_projects
+    
+    # CRITICAL: ACCUMULATE filtered vendors (append, don't replace)
+    data["_filtered_vendors"].extend(list(filtered_vendors_this_call))
+    
+    logger.info("classify_and_filter_completed", 
+               filtered_vendors_count=len(filtered_vendors_this_call),
+               filtered_vendors=list(filtered_vendors_this_call),
+               total_accumulated=len(data["_filtered_vendors"]))
+    
+    return data
+
+
+def compute_companies_summary(data: dict) -> dict:
+    """Enhanced: Include ALL accumulated filtered vendors."""
+    vendors = set()
+    clients = set()
+    
+    # NEW: Add ALL accumulated filtered vendors (with deduplication)
+    if "_filtered_vendors" in data:
+        unique_filtered = set(data["_filtered_vendors"])
+        for vendor in unique_filtered:
+            vendors.add(vendor)
+        logger.info("filtered_vendors_added_to_summary", 
+                   count=len(unique_filtered),
+                   vendors=sorted(list(unique_filtered)))
+        # Clean up temporary data
+        del data["_filtered_vendors"]
+    
+    for exp in data.get("experiences", []):
+        # Collect vendors
+        if exp.get("vendor_consulting_firm"):
+            vendor_name = normalize_company_name(exp["vendor_consulting_firm"])
+            vendors.add(vendor_name)
+        
+        # Collect direct employers (check if they're vendors)
+        if exp.get("company_name"):
+            company_name = normalize_company_name(exp["company_name"])
+            company_lower = company_name.lower()
+            
+            # Check if it's actually a vendor
+            if any(vendor in company_lower for vendor in KNOWN_VENDOR_NAMES):
+                vendors.add(company_name)
+                logger.info("company_reclassified_as_vendor", company=company_name)
+            else:
+                clients.add(company_name)
+        
+        # Collect from client_projects
+        for project in exp.get("client_projects", []):
+            if project.get("project_end_client_name"):
+                clients.add(normalize_company_name(project["project_end_client_name"]))
+            # Add via_vendor to vendors
+            if project.get("via_vendor"):
+                vendors.add(normalize_company_name(project["via_vendor"]))
+    
+    # CRITICAL: Remove vendors from clients (strict separation)
+    clients -= vendors
+    
+    data["companies_summary"] = {
+        "vendors": sorted(list(vendors)),
+        "clients": sorted(list(clients))
+    }
+    
+    logger.info("companies_summary_computed", 
+               vendors=len(vendors), 
+               clients=len(clients),
+               vendor_names=sorted(list(vendors)),
+               client_names=sorted(list(clients)))
+    
+    return data
+
+
+def calculate_sfdc_years(earliest_year: str) -> int:
+    """Calculate SFDC years."""
+    if not earliest_year:
+        return 0
+    try:
+        from datetime import datetime
+        year = int(earliest_year)
+        current_year = datetime.utcnow().year
+        return max(0, min(50, current_year - year))
+    except:
+        return 0
+
+
+def expand_certifications(certifications: List[str]) -> List[str]:
+    """Expand certification patterns."""
+    expanded = []
+    
+    for cert in certifications:
+        cert_lower = cert.lower()
+        
+        if "architect certifications" in cert_lower and "integration" in cert_lower and ("iam" in cert_lower or "identity" in cert_lower):
+            expanded.append("Salesforce Certified Integration Architect")
+            expanded.append("Salesforce Certified Identity and Access Management Architect")
+            logger.info("cert_expanded", original=cert)
+        elif "platform developer ii" in cert_lower and "salesforce" not in cert_lower:
+            expanded.append("Salesforce Certified Platform Developer II")
+        else:
+            expanded.append(cert)
+    
+    return expanded
+
+
+def sanitize_location(location: str) -> str | None:
+    """Remove placeholder locations."""
     if not location:
-        return location
+        return None
     
-    import re
+    if re.fullmatch(r'\s*(city|town)\s*,\s*(country|nation)\s*', location, re.I):
+        logger.warning("location_placeholder_removed", location=location)
+        return None
     
-    # Title case
-    location = location.title()
+    return location
+
+
+def fill_most_recent_job_title(data: dict) -> dict:
+    """Fill most_recent_job_title from first experience."""
+    if not data.get("most_recent_job_title") and data.get("experiences"):
+        first = next((e for e in data["experiences"] if isinstance(e, dict) and e.get("job_title")), None)
+        if first:
+            data["most_recent_job_title"] = first["job_title"]
     
-    # Remove ZIP codes
-    location = re.sub(r'\d{5}(-\d{4})?', '', location)
+    return data
+
+
+def split_certifications_and_awards(certifications: List[str]) -> tuple:
+    """Split certifications."""
+    sfdc_certs = []
+    non_sfdc_certs = []
+    awards = []
     
-    # Remove street addresses
-    location = re.sub(
-        r'\d+\s+[\w\s]+(Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Lane|Ln|Boulevard|Blvd|Way)',
-        '',
-        location,
-        flags=re.IGNORECASE
+    awards_keywords = ["mvp", "speaker", "ambassador", "dreamforce", "tdx"]
+    
+    for cert in certifications:
+        cert_lower = cert.lower()
+        
+        if any(kw in cert_lower for kw in awards_keywords):
+            awards.append(cert)
+        elif "salesforce certified" in cert_lower:
+            sfdc_certs.append(cert)
+        else:
+            non_sfdc_certs.append(cert)
+    
+    return sfdc_certs, non_sfdc_certs, awards
+
+
+def aggregate_and_validate_skills(data: dict) -> dict:
+    """Aggregate skills."""
+    aggregated = {
+        "admin_and_automation": set(),
+        "dev_coding": set(),
+        "architecture_design": set(),
+        "data_management": set(),
+        "deployment_devops": set(),
+        "integration": set(),
+        "marketing_automation": set()
+    }
+    
+    for exp in data.get("experiences", []):
+        if not isinstance(exp, dict):
+            continue
+        
+        skills = exp.get("skills", {})
+        
+        if not isinstance(skills, dict):
+            logger.error("skills_not_dict", company=exp.get("company_name"))
+            continue
+        
+        for category, skill_list in skills.items():
+            if category in aggregated and isinstance(skill_list, list):
+                for skill in skill_list:
+                    if isinstance(skill, str) and skill.strip():
+                        aggregated[category].add(skill.strip())
+    
+    total = sum(len(s) for s in aggregated.values())
+    
+    logger.info(
+        "skills_aggregated",
+        admin=len(aggregated["admin_and_automation"]),
+        dev=len(aggregated["dev_coding"]),
+        arch=len(aggregated["architecture_design"]),
+        data=len(aggregated["data_management"]),
+        devops=len(aggregated["deployment_devops"]),
+        integration=len(aggregated["integration"]),
+        marketing=len(aggregated["marketing_automation"]),
+        total=total
     )
     
-    # Extract city, state/country
-    parts = [p.strip() for p in location.split(',') if p.strip()]
+    if total == 0:
+        logger.error("CRITICAL_NO_SKILLS")
+    if total < 10:
+        logger.warning("FEW_SKILLS", count=total)
     
-    if len(parts) >= 2:
-        # Take first two parts (city, state/country)
-        return f"{parts[0]}, {parts[1]}"
-    
-    return location.strip()
+    return data
 
 
-def calculate_sfdc_years(sfdc_earliest_year: str | None) -> int:
-    """
-    Calculate years in Salesforce.
+def validate_companies_extraction(data: dict) -> dict:
+    """Validate companies."""
+    direct = set()
+    vendors = set()
+    clients = set()
     
-    CRITICAL: Must calculate across ENTIRE resume, not per-page.
-    This fixes Document AI's bug where it calculated per-page.
-    
-    Args:
-        sfdc_earliest_year: First year working with Salesforce (YYYY format)
+    for exp in data.get("experiences", []):
+        if not isinstance(exp, dict):
+            continue
         
-    Returns:
-        Number of years (0 if invalid)
-    """
-    if not sfdc_earliest_year:
-        return 0
+        if exp.get("company_name"):
+            direct.add(exp["company_name"])
+        if exp.get("vendor_consulting_firm"):
+            vendors.add(exp["vendor_consulting_firm"])
+        
+        for proj in exp.get("client_projects", []):
+            if isinstance(proj, dict):
+                if proj.get("project_end_client_name"):
+                    clients.add(proj["project_end_client_name"])
+                if proj.get("via_vendor"):
+                    vendors.add(proj["via_vendor"])
     
-    try:
-        year = int(sfdc_earliest_year)
-        current_year = 2025  # Update annually
-        years = max(0, current_year - year)
-        return years
-    except (ValueError, TypeError):
-        return 0
+    total = len(direct) + len(vendors) + len(clients)
+    
+    logger.info(
+        "companies_validation",
+        direct=len(direct),
+        vendors=len(vendors),
+        clients=len(clients),
+        total=total
+    )
+    
+    if total == 0:
+        logger.error("CRITICAL_NO_COMPANIES")
+    if total < 3:
+        logger.warning("FEW_COMPANIES", count=total)
+    
+    return data
 
 
 def apply_normalization_rules(data: Dict) -> Dict:
-    """
-    Apply all normalization rules to parsed resume data.
+    """Apply all normalization rules."""
     
-    Rules:
-    1. Title case all proper nouns
-    2. Normalize location format
-    3. Calculate SFDC years correctly (across entire resume)
-    4. Normalize product names
-    5. Deduplicate skills
-    
-    Args:
-        data: Raw parsed data from GPT
-        
-    Returns:
-        Normalized data
-    """
-    # Title case name
-    if data.get("full_name"):
-        data["full_name"] = data["full_name"].title()
-    
-    # Normalize location
+    # Sanitize location
     if data.get("candidate_location"):
-        data["candidate_location"] = normalize_location(data["candidate_location"])
+        data["candidate_location"] = sanitize_location(data["candidate_location"])
     
-    # Calculate SFDC years (FIX: across entire resume, not per-page)
+    # Expand certifications
+    if data.get("certifications"):
+        data["certifications"] = expand_certifications(data["certifications"])
+    
+    # Split certifications
+    if data.get("certifications"):
+        sfdc, non_sfdc, awards = split_certifications_and_awards(data["certifications"])
+        data["sfdc_certifications"] = sfdc
+        data["non_sfdc_certifications"] = non_sfdc
+        data["awards_community"] = awards
+        data["certifications"] = sfdc
+    
+    # Calculate years
     if data.get("sfdc_earliest_year"):
         data["sfdc_years"] = calculate_sfdc_years(data["sfdc_earliest_year"])
     
-    # Normalize experiences
-    for exp in data.get("experiences", []):
-        # Title case
-        if exp.get("job_title"):
-            exp["job_title"] = exp["job_title"].title()
-        if exp.get("company_name"):
-            exp["company_name"] = exp["company_name"].title()
-        if exp.get("vendor_consulting_firm"):
-            exp["vendor_consulting_firm"] = exp["vendor_consulting_firm"].title()
-        
-        # Normalize products
-        exp["products"] = [normalize_product(p) for p in exp.get("products", [])]
-        
-        # Normalize skills (title case)
-        exp["skills"] = [s.title() for s in exp.get("skills", [])]
-        
-   
-        for project in exp.get("client_projects", []):
-            if project.get("project_end_client_name"):
-                project["project_end_client_name"] = project["project_end_client_name"].title()
-            if project.get("project_client_industry"):
-                project["project_client_industry"] = project["project_client_industry"].title()
-            
-            # Normalize products at client level (for Lead tagging)
-            project["products"] = [normalize_product(p) for p in project.get("products", [])]
+    # Fill most recent title
+    data = fill_most_recent_job_title(data)
     
-    # Deduplicate and normalize other_skills
-    if data.get("other_skills"):
-        skills = [s.title() for s in data["other_skills"]]
-        data["other_skills"] = list(set(skills))  # Deduplicate
+    # ENHANCED: Apply classification and filtering
+    data = classify_and_filter(data)
     
-    # Normalize certifications
-    if data.get("certifications"):
-        data["certifications"] = [c.title() for c in data["certifications"]]
-    
-    # Title case most recent job
-    if data.get("most_recent_job_title"):
-        data["most_recent_job_title"] = data["most_recent_job_title"].title()
-    
+    # ENHANCED: Compute summary with strict vendor/client separation
     data = compute_companies_summary(data)
     
-    return data
-def compute_companies_summary(data: dict) -> dict:
-    """
-    Compute companies_summary from experiences.
-    
-    Categorizes all companies into:
-    - vendors: Consulting firms (vendor_consulting_firm)
-    - employers: Direct employers (company_name)
-    - clients: End clients (from client_projects)
-    
-    Args:
-        data: Normalized resume data
-        
-    Returns:
-        Data with companies_summary added
-    """
-    vendors = []
-    employers = []
-    clients = []
-    
-    for exp in data.get("experiences", []):
-        # Vendors (consulting firms)
-        if exp.get("vendor_consulting_firm"):
-            vendor = exp["vendor_consulting_firm"]
-            if vendor and vendor not in vendors:
-                vendors.append(vendor)
-        
-        # Employers (direct employment)
-        if exp.get("company_name"):
-            employer = exp["company_name"]
-            if employer and employer not in employers:
-                employers.append(employer)
-        
-        # Clients (end clients from consulting projects)
-        for project in exp.get("client_projects", []):
-            client = project.get("project_end_client_name")
-            if client and client not in clients:
-                clients.append(client)
-    
-    data["companies_summary"] = {
-        "vendors": sorted(vendors),
-        "employers": sorted(employers),
-        "clients": sorted(clients)
-    }
+    # Validations
+    data = aggregate_and_validate_skills(data)
+    data = validate_companies_extraction(data)
     
     return data

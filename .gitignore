@@ -7,3 +7,5 @@ htmlcov
 *.pyc
 *.pyo
 .DS_Store
+.env
+.env.example

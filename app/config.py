@@ -1,6 +1,5 @@
 """
-Application configuration.
-Loads settings from environment variables.
+Application configuration with ALL required fields.
 """
 
 from pydantic_settings import BaseSettings
@@ -10,24 +9,23 @@ from functools import lru_cache
 class Settings(BaseSettings):
     """Application settings."""
     
-    # App Settings (ADD THIS SECTION)
-    debug: bool = False  # <-- THIS IS THE LINE YOU NEED TO ADD
-    
-    # OpenAI Configuration
+    # OpenAI
     openai_api_key: str
-    llm_model: str = "gpt-4o-2024-08-06"
-    llm_temperature: float = 0.0
-    llm_max_tokens: int = 4000
+    llm_model: str = "gpt-4o"
+    llm_max_tokens: int = 16000  # FIXED: Was 25000, now 16000 (safe for gpt-4o)
+    llm_temperature: float = 0.0  # Temperature for LLM
     
-    # Parsing Configuration
-    max_resume_length: int = 8000
+    # Resume parsing
+    max_resume_length: int = 30000  # characters
     
-    # Optional: Database
-    database_url: str = "postgresql://app:app@localhost:5432/cloudclub"
+    # API
+    api_title: str = "Cloud Club Resume Parser"
+    api_version: str = "1.0.0"
+    debug: bool = False  # ADD THIS LINE - fixes the AttributeError
     
     class Config:
         env_file = ".env"
-        env_file_encoding = "utf-8"
+        case_sensitive = False
 
 
 @lru_cache()
