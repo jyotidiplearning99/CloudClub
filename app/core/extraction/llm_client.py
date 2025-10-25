@@ -1,6 +1,7 @@
+# app/core/extraction/llm_client.py - FINAL WORKING VERSION
+
 """
-GPT-4o client with UNIVERSAL location extraction supporting ALL formats.
-Enhanced for Brazilian, Romanian, and international location formats.
+GPT-4o client with COMPLETE field extraction matching Excel schema.
 """
 
 import json
@@ -18,52 +19,43 @@ RESUME_SYSTEM_PROMPT = """You are an expert resume parser for Salesforce staffin
 
 **ZERO HALLUCINATION POLICY:**
 - Extract ONLY what is explicitly stated
-- Extract ALL items from comma-separated lists (including multi-line bullets)
+- Extract ALL items from comma-separated lists
 - Do NOT skip any items
 - If not found → return null or []
 
-**EXPERIENCE RULES:**
-- One experience = one employer
-- If multiple client stints with same employer, MERGE into single experience and list each client in client_projects with its own dates/products
-- Put staffing firms in vendor_consulting_firm; end clients go to client_projects.project_end_client_name
-
-**EXCEL SCHEMA REQUIREMENTS:**
-1. Extract email/location from header FIRST
-2. Map ALL items from "Core Skills & Expertise" into 7 Excel categories
-3. Third-party platforms (Amazon Connect, Twilio Flex, DocuSign, Qualtrics, Informatica Cloud) → "integration"
-4. Extract via_vendor for client projects
-5. Extract ALL companies (vendors + clients + project clients)
+**CRITICAL: EXTRACT ALL MANDATORY FIELDS**
+You MUST extract these fields for EVERY resume:
+1. education (ALL post-secondary degrees)
+2. languages_spoken (ALL languages)
+3. leadership_skills (ALL leadership phrases)
+4. it_earliest_year (REQUIRED - earliest IT job start)
+5. sfdc_earliest_year (REQUIRED - earliest SFDC job start)
 
 Return ONLY valid JSON."""
 
 
 class GPT4oClient:
-    """GPT-4o client with UNIVERSAL location extraction."""
+    """GPT-4o client with COMPLETE extraction."""
     
     def __init__(self):
         self.client = AsyncOpenAI(api_key=settings.openai_api_key)
         self.model = settings.llm_model
     
     def extract_email_and_location_from_header(self, text: str) -> tuple:
-        """
-        UNIVERSAL LOCATION EXTRACTION: Handles ANY separator format.
-        Supports 100+ countries with all separator types (comma, dash, slash, etc).
-        No hardcoding - pure pattern-based extraction.
-        """
+        """UNIVERSAL LOCATION EXTRACTION."""
         emails = []
         location = None
         
         lines = text.split('\n')
         header = '\n'.join(lines[:20])
         
-        # ============ EMAIL EXTRACTION ============
+        # EMAIL EXTRACTION
         email_pattern = r'[\w.+-]+@[\w-]+\.[\w.-]+'
         emails = re.findall(email_pattern, header)
         if not emails:
-            emails = re.findall(email_pattern, text)  # Fallback to full text
+            emails = re.findall(email_pattern, text)
         
-        # ============ COMPREHENSIVE COUNTRY LIST ============
-        # 100+ countries for maximum coverage
+        # COMPREHENSIVE COUNTRY LIST
         COUNTRIES = (
             "USA|US|United States|UK|United Kingdom|Canada|Brazil|Brasil|"
             "India|Australia|Germany|France|Spain|España|Portugal|Italy|"
@@ -77,38 +69,15 @@ class GPT4oClient:
             "Pakistan|Bangladesh|Sri Lanka|Nepal"
         )
         
-        # ============ LOCATION EXTRACTION - UNIVERSAL PATTERNS ============
-        # Ordered from most specific to most general
+        # LOCATION EXTRACTION PATTERNS
         location_patterns = [
-            # PATTERN 1: "City [separator] State [separator] Country"
-            # Matches: Curitiba – PR – Brazil, São Paulo - SP - Brazil, Austin / TX / USA
-            # Separators: em-dash (–), en-dash (—), hyphen (-), slash (/), pipe (|)
-            # Single-word cities only to prevent name contamination
             rf'(?<!\w)([A-Z][A-Za-z]{{1,24}})\s*[–\-—/|]\s*([A-Z]{{2}})\s*[–\-—/|]\s*({COUNTRIES})\b',
-            
-            # PATTERN 2: "City, State [separator] Country"
-            # Matches: Curitiba, PR – Brazil, Austin, TX - USA
             rf'(?<!\w)([A-Z][A-Za-z]{{1,24}}),\s*([A-Z]{{2}})\s*[–\-—/|]\s*({COUNTRIES})\b',
-            
-            # PATTERN 3: "City, State, Country"
-            # Matches: Austin, TX, USA, São Paulo, SP, Brazil
             rf'(?<!\w)([A-Z][A-Za-z]{{1,24}}),\s*([A-Z]{{2}}),\s*({COUNTRIES})\b',
-            
-            # PATTERN 4: "City [separator] Country" (no state)
-            # Matches: Craiova – Romania, London – UK, Paris - France
             rf'(?<!\w)([A-Z][A-Za-z]{{1,24}})\s*[–\-—/|]\s*({COUNTRIES})\b',
-            
-            # PATTERN 5: "City, Country" (comma separator) - MOST COMMON
-            # Matches: Craiova, Romania, London, UK, Paris, France
             rf'(?<!\w)([A-Z][A-Za-z]{{1,24}}),\s*({COUNTRIES})\b',
-            
-            # PATTERN 6: Near "Location:" label (existing pattern for backward compatibility)
             r'(?i)(?:location|address|based\s+in|current\s+location)\s*[:\-]\s*([A-Z][A-Za-z\s,.–\-—/|]{5,40})',
-            
-            # PATTERN 7: "City, State" (US-style without country)
             r'(?<!\w)([A-Z][A-Za-z]{1,24}),\s*(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)\b',
-            
-            # PATTERN 8: After email (existing pattern)
             r'(?:@[\w.-]+\.[\w]+)\s*[|\-–—]\s*([A-Z][A-Za-z\s,.–\-]{5,40})',
         ]
         
@@ -117,40 +86,30 @@ class GPT4oClient:
             if match:
                 groups = match.groups()
                 
-                # Reconstruct location based on number of groups
                 if len(groups) == 3:
-                    # Three-part: City, State, Country
                     city, state, country = groups
                     city = city.strip()
                     state = state.strip()
                     country = country.strip()
                     
-                    # Validate city name (no numbers, reasonable length)
                     if any(c.isdigit() for c in city) or len(city) < 2:
                         continue
                     
-                    # Determine separator style from pattern index
                     if pattern_idx == 0:
-                        # Pattern 1: preserve em-dash style
                         location = f"{city} – {state} – {country}"
                     elif pattern_idx == 1:
-                        # Pattern 2: mixed comma and dash
                         location = f"{city}, {state} – {country}"
                     else:
-                        # Pattern 3: all commas
                         location = f"{city}, {state}, {country}"
                         
                 elif len(groups) == 2:
-                    # Two-part: City, Country OR City, State
                     part1, part2 = groups
                     part1 = part1.strip()
                     part2 = part2.strip()
                     
-                    # Validate city name
                     if any(c.isdigit() for c in part1) or len(part1) < 2:
                         continue
                     
-                    # Check separator in original text
                     original_segment = match.group(0)
                     if '–' in original_segment or '—' in original_segment:
                         location = f"{part1} – {part2}"
@@ -160,218 +119,389 @@ class GPT4oClient:
                         location = f"{part1}, {part2}"
                         
                 else:
-                    # Single group - take as-is
                     location = groups[0].strip()
-                    # Validate
                     if any(c.isdigit() for c in location) or len(location) < 5:
                         continue
                 
-                # Final cleanup
                 location = ' '.join(location.split())
                 location = location.rstrip('.,;')
                 
-                # Additional validation
                 if len(location) >= 5 and any(c.isalpha() for c in location):
-                    # Remove false positives
                     false_positives = ['years old', 'city, country', 'age']
                     if not any(fp in location.lower() for fp in false_positives):
-                        logger.info(
-                            "location_extracted_from_header",
-                            location=location,
-                            pattern_idx=pattern_idx
-                        )
+                        logger.info("location_extracted_from_header", location=location, pattern_idx=pattern_idx)
                         break
                 else:
                     location = None
         
-        # Final log
         if emails:
-            logger.info(
-                "header_extraction_success",
-                emails=len(emails),
-                location=bool(location),
-                location_value=location if location else "NOT_FOUND"
-            )
+            logger.info("header_extraction_success", emails=len(emails), location=bool(location), location_value=location if location else "NOT_FOUND")
         else:
             logger.warning("header_extraction_no_email")
         
         return emails, location
     
-    def _extract_applications_products(self, text: str) -> dict:
-        """Pre-extract products from "Applications:" sections (multi-line)."""
-        products_by_section = {}
-        pattern = r'Applications?:\s*\n([\s\S]*?)(?=\n\s*\n|^\s*[A-Z][A-Za-z ]{2,}:\s*$|$)'
-        matches = re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE)
-        
-        for idx, match in enumerate(matches):
-            products_text = match.group(1).strip()
-            products = []
-            for line in products_text.split('\n'):
-                line = line.strip().lstrip('•-*').strip()
-                if line:
-                    products.extend([p.strip() for p in line.split(',') if p.strip()])
-            
-            if products:
-                products_by_section[f"section_{idx}"] = products
-                logger.info("applications_section_found", section=idx, products_count=len(products))
-        
-        return products_by_section
-    
-    def _pre_extract_projects(self, text: str) -> dict:
-        """Pre-extract client projects from 'Projects:' lines (multi-line support)."""
-        projects_by_role = {}
-        pattern = r'Projects?:\s*\n([\s\S]*?)(?=\n\s*\n|^\s*[A-Z][A-Za-z ]{2,}:\s*$|$)'
-        matches = re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE)
-        
-        for idx, match in enumerate(matches):
-            projects_text = match.group(1).strip()
-            projects = []
-            for line in projects_text.split('\n'):
-                line = line.strip().lstrip('•-*').strip()
-                if line:
-                    projects.extend([p.strip() for p in re.split(r',\s*(?![^()]*\))', line) if p.strip()])
-            
-            if projects:
-                projects_by_role[f"role_{idx}"] = projects
-                logger.info("projects_line_found", role=idx, projects_count=len(projects))
-        
-        return projects_by_role
-    
-    def _pre_extract_vendor_client_pairs(self, text: str) -> list:
-        """Pre-extract vendor-client pairs from "Vendor – Client (dates)" patterns."""
-        pattern = r'([A-Za-z0-9 .&\'/-]+?)\s*[–-]\s*([A-Za-z0-9 .&\'/-]+?)(?:,\s*[A-Za-z .-]+)?\s*\(([A-Za-z]{3,9}\s+\d{4})\s*[–-]\s*([A-Za-z]{3,9}\s+\d{4}|Present)\)'
-        
-        pairs = []
-        for match in re.finditer(pattern, text):
-            pairs.append({
-                "via_vendor": match.group(1).strip(),
-                "project_end_client_name": match.group(2).strip(),
-                "project_start_date": match.group(3).strip(),
-                "project_end_date": match.group(4).strip()
-            })
-            logger.info("vendor_client_pair_found", 
-                       vendor=match.group(1).strip(),
-                       client=match.group(2).strip())
-        
-        return pairs
-    
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10)
-    )
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def extract_resume(self, text: str) -> dict:
-        """Extract resume with UNIVERSAL location extraction."""
+        """Extract resume with ALL Excel fields."""
         if len(text) > settings.max_resume_length:
             logger.warning("resume_truncated", length=settings.max_resume_length)
             text = text[:settings.max_resume_length] + "\n[TRUNCATED]"
         
-        # PRE-EXTRACT email/location (CRITICAL)
         emails, location = self.extract_email_and_location_from_header(text)
         
-        applications_data = self._extract_applications_products(text)
-        projects_data = self._pre_extract_projects(text)
-        vendor_client_pairs = self._pre_extract_vendor_client_pairs(text)
-        
+        # ============ CRITICAL: COMPLETE EXTRACTION PROMPT ============
         prompt = f"""Parse this resume per CC Document AI Labels.xlsx schema.
 
 **CONTACT (PRE-EXTRACTED):**
-- emails: {json.dumps(emails)} (already extracted from header)
-- candidate_location: {json.dumps(location)} (already extracted)
+- emails: {json.dumps(emails)}
+- candidate_location: {json.dumps(location)}
 
-**PROFESSIONAL SUMMARY:**
-Copy VERBATIM from "PROFESSIONAL SKILLS" section.
+**MANDATORY EXTRACTIONS (DO NOT SKIP):**
 
-**SFDC EARLIEST YEAR:**
-Find FIRST year with "Salesforce" in ANY job.
+1. **education** (CRITICAL - MUST EXTRACT):
+Extract ALL post-secondary degrees (Bachelor's and above):
+{{
+  "degree": "B.A. Graduation in International Relationship",
+  "institution_name": "University Tuiuti",
+  "is_degree_completed": "Completed",
+  "graduation_year": "2001"
+}}
 
-**EXPERIENCE RULES:**
-- One experience = one employer
-- If multiple client stints with same employer, MERGE into single experience
-- List each client in client_projects with its own dates/products
+Look for "Education", "Academic Background", "Qualifications" sections.
 
-**COMPANIES:**
-1. **company_name**: Direct employer (non-IT)
-2. **vendor_consulting_firm**: IT/SFDC consulting firm
-3. **client_projects**: ALL end clients with via_vendor
+2. **languages_spoken** (MUST EXTRACT ALL):
+Extract ONLY language names (e.g., "English", "Portuguese"):
+- Remove proficiency: "English (Fluent)" → "English"
+- Look for: "Languages:", "Fluent in:", "Idiomas:"
 
-**VENDOR-CLIENT PAIRS:**
-Found {len(vendor_client_pairs)} pairs:
-{json.dumps(vendor_client_pairs, indent=2)}
+3. **leadership_skills** (MUST EXTRACT ALL):
+Extract ALL phrases showing:
+- "Led team of X"
+- "Mentored X developers"
+- "Managed budget"
+- "Guiding the team"
 
-Use these to populate via_vendor for EACH matching client.
+4. **it_earliest_year** (REQUIRED):
+Find EARLIEST start date across ALL IT jobs.
+Return YYYY format.
 
-**PRODUCTS:**
-Found {len(applications_data)} sections:
-{json.dumps(applications_data, indent=2)}
+5. **sfdc_earliest_year** (REQUIRED):
+Find EARLIEST start date where "Salesforce" or "SFDC" mentioned.
+Return YYYY format.
 
-Extract ALL products! Aliases:
-- "B2B Commerce" → Commerce Cloud
-- "Communities" → Experience Cloud
-- "FSC" → Financial Services Cloud
-- "Wave Analytics" → Tableau CRM
+6. **CRITICAL: candidate_overall_summary RULES:**
+- EXACTLY 2-3 sentences
+- THIRD PERSON ONLY: "This candidate has..." NOT "I have..."
+- NO personal pronouns: Remove "I", "my", "me"
+- NO client/company names
+- Synthesize: SFDC start year + recent title + products + certs
+- Example: "This candidate is a highly certified Salesforce professional with 12 years of experience specializing in Sales Cloud, Service Cloud, and CPQ. They hold 25 Salesforce certifications including multiple architect credentials."
 
-**CLIENT PROJECTS:**
-Found {len(projects_data)} lines:
-{json.dumps(projects_data, indent=2)}
+**═══════════════════════════════════════════════════════════════**
+**CRITICAL: CLIENT PROJECTS EXTRACTION FROM COMMA-SEPARATED LISTS**
+**═══════════════════════════════════════════════════════════════**
 
-Extract ALL clients! Populate via_vendor from vendor_consulting_firm.
+When you see text like:
+"Projects: Euroconsumers (Portugal), KCSIT (Portugal), Cognizant (England), Hapag-Lloyd (England), Deutsche Bank (Germany)"
 
-**SKILLS - 7 EXCEL CATEGORIES:**
+You MUST extract EVERY item as a SEPARATE client project:
 
-Map EVERY item from "Core Skills & Expertise" into these EXACT 7 categories:
+{{
+  "client_projects": [
+    {{
+      "project_end_client_name": "Euroconsumers",
+      "project_scope_summary": "Led Salesforce implementation"
+    }},
+    {{
+      "project_end_client_name": "KCSIT",
+      "project_scope_summary": "Led Salesforce implementation"
+    }},
+    {{
+      "project_end_client_name": "Cognizant",
+      "project_scope_summary": "Led Salesforce implementation"
+    }},
+    {{
+      "project_end_client_name": "Hapag-Lloyd",
+      "project_scope_summary": "Led Salesforce implementation"
+    }},
+    {{
+      "project_end_client_name": "Deutsche Bank",
+      "project_scope_summary": "Led Salesforce implementation"
+    }}
+  ]
+}}
 
-1. **admin_and_automation**: Flow, Process Builder, Workflow Rules, Validation Rules, Approval Processes, Reports & Dashboards, User Management, Profiles, Permission Sets, Security Settings, Sandbox Management, UAT, QA Testing
+**DO NOT skip any items in comma-separated lists!**
 
-2. **dev_coding**: Apex, Lightning Web Components (LWC), Visualforce, Aura Components, JavaScript, HTML, CSS, JQuery, TypeScript, REST/SOAP API, Unit Testing, Trigger Frameworks
+**═══════════════════════════════════════════════════════════════**
+**CRITICAL: COMPREHENSIVE SKILLS EXTRACTION FROM JOB DESCRIPTIONS**
+**═══════════════════════════════════════════════════════════════**
 
-3. **architecture_design**: Solution Design, Technical Architecture, System Architecture, Data Modeling, Schema Design, Security Architecture, Performance Tuning, Scalability Planning, Large Volume Data, Governance, Center of Excellence (CoE)
+For EACH work experience, you MUST:
 
-4. **data_management**: Data Quality, Data Cleansing, Data Migration, ETL, Data Loader, Data Import Wizard, Data Stewardship, Duplicate Management, Master Data Management (MDM), Data Governance
+1. **READ EVERY SENTENCE** in the "Main activities:" section
+2. **READ EVERY ITEM** in the "Applications:" section  
+3. **EXTRACT EVERY SKILL MENTIONED** using the parsing rules below
 
-5. **deployment_devops**: Gearset, Copado, Flosum, AutoRABIT, Version Control, Git, GitHub, GitLab, Bitbucket, CI/CD Pipelines, Change Sets, Metadata API, Ant Migration Tool
+**HOW TO PARSE NARRATIVE TEXT INTO SKILLS:**
 
-6. **integration**: SOAP/REST API Design, SOQL/SOSL, Platform Events, Change Data Capture (CDC), Integration Patterns, MuleSoft, Dell Boomi, Informatica, Jitterbit, **Amazon Connect, Twilio Flex, DocuSign, Qualtrics, Informatica Cloud**
+Read each sentence and extract based on these patterns:
 
-7. **marketing_automation**: Ampscript, Server-Side JavaScript (SSJS), Email Studio, Journey Builder, Automation Studio, Mobile Studio, Advertising Studio, Data Extensions, Pardot, SFMC, Marketing Cloud Account Engagement
+**ADMINISTRATIVE ACTIONS → admin_and_automation:**
+- "Created validation rules" → ["Validation Rules"]
+- "Built approval processes" → ["Approval Processes"]
+- "Configured profiles and permission sets" → ["Profiles", "Permission Sets"]
+- "Developed reports and dashboards" → ["Reports", "Dashboards"]
+- "Implemented workflow rules" → ["Workflow Rules"]
+- "Created queues and public groups" → ["Queues", "Public Groups"]
+- "Designed email templates" → ["Email Templates"]
+- "Configured custom settings" → ["Custom Settings"]
+- "Set up record types" → ["Record Types"]
+- "Built page layouts" → ["Page Layouts"]
+- "Configured sharing settings" → ["Sharing Settings"]
+- "Managed user access" → ["User Management"]
+- "Created flows" → ["Flow"]
+- "Built process builder" → ["Process Builder"]
 
-**CRITICAL: Map EVERY skill from resume into one of the 7 categories!**
+**DEVELOPMENT ACTIONS → dev_coding:**
+- "Developed Apex classes" → ["Apex", "Apex Classes"]
+- "Created Apex triggers" → ["Apex Triggers"]
+- "Built Lightning Web Components" → ["LWC", "Lightning Web Components"]
+- "Developed Visualforce pages" → ["Visualforce"]
+- "Created Aura components" → ["Aura Components"]
+- "Wrote test classes" → ["Test Classes", "Unit Testing"]
+- "Developed controllers" → ["Controllers"]
+- "Implemented batch Apex" → ["Batch Apex"]
+- "Used SOQL queries" → ["SOQL"]
+- "Wrote JavaScript" → ["JavaScript"]
+- "Developed REST API" → ["REST API"]
+- "Implemented SOAP API" → ["SOAP API"]
+- "Created Apex REST services" → ["REST API", "Apex"]
+- "Developed platform events" → ["Platform Events"]
+- "Used SOSL" → ["SOSL"]
+- "Wrote scheduled Apex" → ["Scheduled Apex"]
+- "Implemented queueable Apex" → ["Queueable Apex"]
+
+**ARCHITECTURE ACTIONS → architecture_design:**
+- "Led solution design" → ["Solution Design"]
+- "Defined technical architecture" → ["Technical Architecture"]
+- "Implemented security models" → ["Security Models"]
+- "Conducted code reviews" → ["Code Reviews"]
+- "Established best practices" → ["Best Practices"]
+- "Designed scalable solutions" → ["Scalability"]
+- "Implemented governance" → ["Governance"]
+- "Built Center of Excellence" → ["CoE"]
+- "Created design patterns" → ["Design Patterns"]
+- "Managed technical debt" → ["Technical Debt Management"]
+- "Performed architecture reviews" → ["Solution Reviews", "Architecture Reviews"]
+- "Designed data models" → ["Data Modeling"]
+- "Implemented security architecture" → ["Security Architecture"]
+- "Optimized performance" → ["Performance Tuning"]
+- "Established enterprise architecture" → ["Enterprise Architecture"]
+- "Implemented sharing rules" → ["Sharing Rules"]
+
+**DATA ACTIONS → data_management:**
+- "Created custom objects" → ["Custom Objects"]
+- "Established master-detail relationships" → ["Master-Detail Relationships"]
+- "Built lookup relationships" → ["Lookup Relationships"]
+- "Designed junction objects" → ["Junction Objects"]
+- "Performed data migration" → ["Data Migration"]
+- "Used Data Loader" → ["Data Loader"]
+- "Implemented data quality" → ["Data Quality"]
+- "Designed data models" → ["Data Modeling"]
+- "Created external objects" → ["External Objects"]
+- "Used Schema Builder" → ["Schema Builder"]
+- "Performed ETL" → ["ETL"]
+- "Implemented data cleansing" → ["Data Cleansing"]
+- "Managed data stewardship" → ["Data Stewardship"]
+- "Implemented MDM" → ["MDM"]
+- "Used big objects" → ["Big Objects"]
+
+**DEVOPS ACTIONS → deployment_devops:**
+- "Implemented CI/CD" → ["CI/CD"]
+- "Used Copado" → ["Copado"]
+- "Configured Flosum" → ["Flosum"]
+- "Set up Git" → ["Git"]
+- "Used Gearset" → ["Gearset"]
+- "Created change sets" → ["Change Sets"]
+- "Used Metadata API" → ["Metadata API"]
+- "Configured ANT migration" → ["ANT Migration Tool"]
+- "Managed releases" → ["Release Management"]
+- "Used Salesforce CLI" → ["Salesforce CLI", "SFDX"]
+- "Managed sandboxes" → ["Sandboxes"]
+- "Used GitHub" → ["GitHub"]
+- "Implemented version control" → ["Version Control"]
+- "Used Salesforce DX" → ["SFDX"]
+- "Configured Own Backup" → ["Own Backup"]
+- "Managed packages" → ["Package Development"]
+
+**INTEGRATION ACTIONS → integration:**
+- "Integrated with MuleSoft" → ["MuleSoft"]
+- "Built REST integrations" → ["REST API"]
+- "Implemented SOAP services" → ["SOAP API"]
+- "Used Platform Events" → ["Platform Events"]
+- "Integrated with SAP" → ["SAP Integration"]
+- "Connected to Oracle" → ["Oracle Integration"]
+- "Used Informatica" → ["Informatica"]
+- "Implemented Jitterbit" → ["Jitterbit"]
+- "Created webhooks" → ["Webhooks"]
+- "Developed outbound messages" → ["Outbound Messages"]
+- "Configured CDC" → ["Change Data Capture"]
+- "Used middleware" → ["Middleware"]
+- "Implemented API gateway" → ["API Gateway"]
+- "Configured remote site settings" → ["Remote Site Settings"]
+- "Set up named credentials" → ["Named Credentials"]
+- "Created connected apps" → ["Connected Apps"]
+
+**MARKETING ACTIONS → marketing_automation:**
+- "Developed Ampscript" → ["Ampscript"]
+- "Used Journey Builder" → ["Journey Builder"]
+- "Configured Email Studio" → ["Email Studio"]
+- "Implemented Pardot" → ["Pardot"]
+- "Used Marketing Cloud" → ["SFMC"]
+- "Developed SSJS" → ["SSJS"]
+- "Used Content Builder" → ["Content Builder"]
+- "Configured Automation Studio" → ["Automation Studio"]
+- "Implemented Einstein recommendations" → ["Einstein Recommendations"]
+
+**SKILL CATEGORIES WITH FULL KEYWORD LISTS:**
+
+1. **admin_and_automation**: 
+Flow, Process Builder, Workflow Rules, Validation Rules, Reports, Dashboards, 
+User Management, Profiles, Permission Sets, Approval Processes, Queues, Public Groups,
+Email Templates, Custom Settings, Sharing Settings, Roles, Permission Set Groups,
+Dynamic Forms, Record Types, Page Layouts, Field-Level Security, Object Security
+
+2. **dev_coding**: 
+Apex, LWC (Lightning Web Components), Aura Components, Visualforce, JavaScript,
+HTML, CSS, REST API, SOAP API, SOQL, SOSL, Unit Testing, Test Classes,
+Apex Triggers, Controllers, Batch Apex, Scheduled Apex, Queueable Apex,
+Platform Events, Custom Metadata, Lightning Design System, Apex Classes
+
+3. **architecture_design**: 
+Solution Design, Technical Architecture, Data Modeling, Security Architecture,
+Performance Tuning, Scalability, Governance, CoE (Center of Excellence),
+Enterprise Architecture, Security Models, Sharing Rules, Code Reviews,
+Best Practices, Design Patterns, Technical Debt Management, Solution Reviews,
+Architecture Reviews
+
+4. **data_management**: 
+Data Quality, Data Cleansing, Data Migration, ETL, Data Loader, Data Stewardship,
+MDM (Master Data Management), Data Modeling, Custom Objects, Master-Detail Relationships,
+Lookup Relationships, Junction Objects, External Objects, Big Objects,
+Data Import Wizard, Schema Builder
+
+5. **deployment_devops**: 
+Gearset, Copado, Flosum, Git, GitHub, Bitbucket, CI/CD Pipelines, Change Sets,
+Metadata API, ANT Migration Tool, Release Management, Version Control,
+SFDX (Salesforce DX), Salesforce CLI, Own Backup, Package Development,
+Sandboxes, Environment Management
+
+6. **integration**: 
+REST API, SOAP API, SOQL, SOSL, Platform Events, Change Data Capture (CDC),
+MuleSoft, Informatica, Jitterbit, External Web Services, SAP Integration,
+Oracle Integration, Middleware, API Gateway, Webhooks, Outbound Messages,
+Remote Site Settings, Named Credentials, Connected Apps
+
+7. **marketing_automation**: 
+Ampscript, SSJS (Server-Side JavaScript), Email Studio, Journey Builder,
+Pardot, SFMC (Marketing Cloud), Marketing Cloud Account Engagement,
+Content Builder, Automation Studio, Einstein Recommendations
+
+**EXTRACTION REQUIREMENTS:**
+- For architect roles: MINIMUM 15 skills total across all categories
+- For other roles: MINIMUM 8 skills total
+- Parse EVERY sentence in "Main activities" section
+- Extract EVERY tool from "Applications" section
+- Do NOT skip any mentioned technologies
+
+**EXAMPLE EXTRACTION (ExxonMobil System Architect):**
+
+From text: "Developed Apex classes with REST calls to connect to external web services... Created custom objects and established relationships using lookup, master-detail, and junction objects to support complex data models... Led the creation and implementation of the CI/CD process, configuring Flosum and Copado... Worked extensively on Salesforce security models, including Apex-based sharing rules... Developed Salesforce features such as Approval Processes, Queues, Public Groups, Email Templates, and Communities. Configured security at the profile, object, field, and record levels... Integrated with MuleSoft and SAP"
+
+Extract:
+{{
+  "skills": {{
+    "admin_and_automation": [
+      "Approval Processes", "Queues", "Public Groups", "Email Templates",
+      "Profiles", "Permission Sets", "Field-Level Security", "Sharing Settings",
+      "Object Security"
+    ],
+    "dev_coding": [
+      "Apex", "Apex Classes", "REST API", "SOQL", "Test Classes", "Apex Triggers",
+      "Controllers", "Unit Testing"
+    ],
+    "architecture_design": [
+      "Security Models", "Sharing Rules", "Security Architecture", "Solution Design",
+      "Enterprise Architecture", "Best Practices", "Technical Architecture"
+    ],
+    "data_management": [
+      "Custom Objects", "Master-Detail Relationships", "Lookup Relationships",
+      "Junction Objects", "Data Modeling", "Data Migration"
+    ],
+    "deployment_devops": [
+      "CI/CD", "Flosum", "Copado", "Release Management", "Own Backup",
+      "Version Control"
+    ],
+    "integration": [
+      "REST API", "MuleSoft", "SAP Integration", "External Web Services",
+      "SOAP API"
+    ],
+    "marketing_automation": []
+  }}
+}}
 
 RESUME TEXT:
 {text}
 
-JSON OUTPUT:
+JSON OUTPUT (ALL FIELDS REQUIRED):
 {{
   "full_name": "REQUIRED",
   "emails": {json.dumps(emails)},
   "candidate_location": {json.dumps(location)},
-  "sfdc_earliest_year": "YYYY",
-  "candidate_overall_summary": "VERBATIM",
-  "certifications": [],
+  "resume_header_title": null,
+  "it_earliest_year": "YYYY (REQUIRED)",
+  "sfdc_earliest_year": "YYYY (REQUIRED)",
+  "candidate_overall_summary": "THIRD PERSON, 2-3 sentences",
+  "education": [
+    {{
+      "degree": "EXTRACT ALL",
+      "institution_name": "EXTRACT ALL",
+      "is_degree_completed": "Completed",
+      "graduation_year": "YYYY"
+    }}
+  ],
+  "certifications": ["Salesforce certs only"],
+  "non_sfdc_certifications": ["AWS, PMP, etc"],
+  "languages_spoken": ["English", "Portuguese", "EXTRACT ALL"],
+  "leadership_skills": ["EXTRACT ALL phrases"],
   "other_skills": [],
   "experiences": [
     {{
-      "company_name": "Direct or null",
+      "company_name": "Direct client or null",
       "vendor_consulting_firm": "IT firm or null",
       "job_title": "Title",
       "job_start_date": "YYYY-MM",
       "job_end_date": "YYYY-MM or Present",
       "products": ["Products"],
+      "sfdc_appexchange_products": ["Apttus CPQ", "PROS CPQ", etc],
       "skills": {{
-        "admin_and_automation": [],
-        "dev_coding": [],
-        "architecture_design": [],
-        "data_management": [],
-        "deployment_devops": [],
-        "integration": ["MUST include third-party platforms if mentioned"],
-        "marketing_automation": []
+        "admin_and_automation": ["EXTRACT FROM MAIN ACTIVITIES - READ EVERY SENTENCE"],
+        "dev_coding": ["EXTRACT FROM MAIN ACTIVITIES - READ EVERY SENTENCE"],
+        "architecture_design": ["EXTRACT FROM MAIN ACTIVITIES - READ EVERY SENTENCE"],
+        "data_management": ["EXTRACT FROM MAIN ACTIVITIES - READ EVERY SENTENCE"],
+        "deployment_devops": ["EXTRACT FROM MAIN ACTIVITIES - READ EVERY SENTENCE"],
+        "integration": ["EXTRACT FROM MAIN ACTIVITIES - READ EVERY SENTENCE"],
+        "marketing_automation": ["If applicable"]
       }},
       "client_projects": [
         {{
           "project_end_client_name": "Client",
-          "via_vendor": "Use vendor from pairs above OR vendor_consulting_firm",
-          "project_start_date": null,
-          "project_end_date": null,
-          "products": []
+          "via_vendor": "Vendor if applicable",
+          "project_scope_summary": "FULL description with role/responsibilities",
+          "products": [],
+          "project_sfdc_appexchange_products": ["If any"]
         }}
       ]
     }}
@@ -391,51 +521,67 @@ JSON OUTPUT:
             )
             
             json_text = response.choices[0].message.content
+            
+            # Check for truncation
+            if json_text.endswith('...') or not json_text.strip().endswith('}'):
+                logger.error("gpt_response_truncated", partial_json=json_text[-200:])
+                raise ValueError("GPT response was truncated due to token limit")
+            
             parsed = json.loads(json_text)
             
-            # FORCE email/location if LLM didn't use them
+            # Force email/location
             if emails and not parsed.get("emails"):
                 parsed["emails"] = emails
-                logger.info("emails_forced", count=len(emails))
-            
             if location and not parsed.get("candidate_location"):
                 parsed["candidate_location"] = location
-                logger.info("location_forced", location=location)
             
-            # Backfill via_vendor (CRITICAL)
+            # CRITICAL: Derive it_earliest_year if null
+            if not parsed.get("it_earliest_year"):
+                min_year = None
+                for exp in parsed.get("experiences", []):
+                    start_date = exp.get("job_start_date")
+                    if start_date:
+                        year = int(str(start_date)[:4])
+                        if min_year is None or year < min_year:
+                            min_year = year
+                
+                if min_year:
+                    parsed["it_earliest_year"] = str(min_year)
+                    logger.warning("it_earliest_year_derived", year=min_year)
+            
+            # CRITICAL: Derive sfdc_earliest_year if null
+            if not parsed.get("sfdc_earliest_year"):
+                min_year = None
+                for exp in parsed.get("experiences", []):
+                    start_date = exp.get("job_start_date")
+                    if start_date:
+                        is_sfdc_job = (
+                            "salesforce" in exp.get("job_title", "").lower() or
+                            "sfdc" in exp.get("job_title", "").lower() or
+                            bool(exp.get("products"))
+                        )
+                        if is_sfdc_job:
+                            year = int(str(start_date)[:4])
+                            if min_year is None or year < min_year:
+                                min_year = year
+                
+                if min_year:
+                    parsed["sfdc_earliest_year"] = str(min_year)
+                    logger.warning("sfdc_earliest_year_derived", year=min_year)
+            
+            # Backfill via_vendor for ALL projects
             for exp in parsed.get("experiences", []):
                 vendor = exp.get("vendor_consulting_firm")
                 if vendor and exp.get("client_projects"):
                     for proj in exp["client_projects"]:
                         if not proj.get("via_vendor"):
                             proj["via_vendor"] = vendor
-                            logger.info("via_vendor_backfilled", vendor=vendor, client=proj.get("project_end_client_name"))
+                            logger.info("via_vendor_backfilled", vendor=vendor)
             
-            # Ensure skill structure
+            # Ensure skill structure FOR EVERY EXPERIENCE
             experiences = parsed.get("experiences", [])
-            for exp in experiences:
-                if "skills" in exp:
-                    if isinstance(exp["skills"], list):
-                        logger.warning("skills_was_list_converting")
-                        exp["skills"] = {
-                            "admin_and_automation": [],
-                            "dev_coding": [],
-                            "architecture_design": [],
-                            "data_management": [],
-                            "deployment_devops": [],
-                            "integration": [],
-                            "marketing_automation": []
-                        }
-                    elif isinstance(exp["skills"], dict):
-                        required = [
-                            "admin_and_automation", "dev_coding", "architecture_design",
-                            "data_management", "deployment_devops", "integration",
-                            "marketing_automation"
-                        ]
-                        for cat in required:
-                            if cat not in exp["skills"]:
-                                exp["skills"][cat] = []
-                else:
+            for exp_idx, exp in enumerate(experiences):
+                if "skills" not in exp or not isinstance(exp["skills"], dict):
                     exp["skills"] = {
                         "admin_and_automation": [],
                         "dev_coding": [],
@@ -445,25 +591,41 @@ JSON OUTPUT:
                         "integration": [],
                         "marketing_automation": []
                     }
-            
-            # Count
-            total_skills = sum(
-                sum(len(v) for v in e.get("skills", {}).values() if isinstance(v, list))
-                for e in experiences
-            )
+                else:
+                    required = [
+                        "admin_and_automation", "dev_coding", "architecture_design",
+                        "data_management", "deployment_devops", "integration",
+                        "marketing_automation"
+                    ]
+                    for cat in required:
+                        if cat not in exp["skills"]:
+                            exp["skills"][cat] = []
+                
+                # VALIDATE: Log if skills are insufficient
+                total_skills = sum(len(v) for v in exp["skills"].values() if isinstance(v, list))
+                job_title = exp.get("job_title", "").lower()
+                min_expected = 15 if "architect" in job_title else 8
+                
+                if total_skills < min_expected:
+                    logger.error(
+                        "INCOMPLETE_SKILLS_EXTRACTION",
+                        experience_index=exp_idx,
+                        company=exp.get("company_name") or exp.get("vendor_consulting_firm"),
+                        title=exp.get("job_title"),
+                        extracted_skills=total_skills,
+                        expected=min_expected
+                    )
             
             logger.info(
                 "gpt_extraction_succeeded",
                 name=parsed.get("full_name"),
-                location=parsed.get("candidate_location"),
+                it_earliest_year=parsed.get("it_earliest_year"),
                 sfdc_earliest_year=parsed.get("sfdc_earliest_year"),
-                experiences=len(experiences),
-                total_skills=total_skills,
-                tokens=response.usage.total_tokens
+                education=len(parsed.get("education", [])),
+                languages=len(parsed.get("languages_spoken", [])),
+                leadership=len(parsed.get("leadership_skills", [])),
+                experiences=len(experiences)
             )
-            
-            if total_skills < 10:
-                logger.error("ALERT_FEW_SKILLS_EXTRACTED", count=total_skills)
             
             return parsed
             

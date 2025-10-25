@@ -1,5 +1,5 @@
 """
-Pydantic schemas with STRICT skill categorization.
+Pydantic schemas with ALL Excel fields INCLUDING AppExchange products.
 """
 
 from pydantic import BaseModel, Field, EmailStr, validator
@@ -18,6 +18,14 @@ class SocialLinks(BaseModel):
     personal_web: Optional[str] = Field(None)
 
 
+class Education(BaseModel):
+    """Education entry."""
+    degree: Optional[str] = Field(None)
+    institution_name: Optional[str] = Field(None)
+    is_degree_completed: Optional[str] = Field(None)
+    graduation_year: Optional[str] = Field(None)
+
+
 class ClientProject(BaseModel):
     """End client project."""
     project_end_client_name: str = Field(...)
@@ -26,6 +34,11 @@ class ClientProject(BaseModel):
     project_start_date: Optional[str] = Field(None)
     project_end_date: Optional[str] = Field(None)
     products: List[str] = Field(default_factory=list)
+    
+    # ADD THIS LINE (Excel requirement):
+    project_sfdc_appexchange_products: List[str] = Field(default_factory=list)
+    
+    project_scope_summary: Optional[str] = Field(None)
 
 
 class Experience(BaseModel):
@@ -39,7 +52,13 @@ class Experience(BaseModel):
     job_end_date: Optional[str] = Field(None)
     products: List[str] = Field(default_factory=list)
     
-    # STRICT: Dict only with 7 categories
+    # ADD THIS LINE (Excel requirement):
+    sfdc_appexchange_products: List[str] = Field(default_factory=list)
+    
+    company_is_sfdc_client: Optional[str] = Field(None)
+    sfdc_role_description: Optional[str] = Field(None)
+    sfdc_role_level: Optional[str] = Field(None)
+    
     skills: Dict[str, List[str]] = Field(
         default_factory=lambda: {
             "admin_and_automation": [],
@@ -90,7 +109,7 @@ class CompaniesSummary(BaseModel):
 
 
 class CandidateProfile(BaseModel):
-    """Complete profile."""
+    """Complete profile with ALL Excel schema fields."""
     
     full_name: str = Field(...)
     emails: List[EmailStr] = Field(default_factory=list)
@@ -98,16 +117,23 @@ class CandidateProfile(BaseModel):
     links: Optional[SocialLinks] = Field(None)
     
     candidate_location: Optional[str] = Field(None)
+    resume_header_title: Optional[str] = Field(None)
     
     it_earliest_year: Optional[str] = Field(None)
     sfdc_earliest_year: Optional[str] = Field(None)
     sfdc_years: Optional[int] = Field(None)
+    it_total_years_experience: Optional[int] = Field(None)
     
     candidate_overall_summary: Optional[str] = Field(None)
     most_recent_job_title: Optional[str] = Field(None)
     
+    education: List[Education] = Field(default_factory=list)
+    
     other_skills: List[str] = Field(default_factory=list)
     certifications: List[str] = Field(default_factory=list)
+    non_sfdc_certifications: List[str] = Field(default_factory=list)
+    languages_spoken: List[str] = Field(default_factory=list)
+    leadership_skills: List[str] = Field(default_factory=list)
     
     experiences: List[Experience] = Field(default_factory=list)
     companies_summary: Optional[CompaniesSummary] = Field(None)
