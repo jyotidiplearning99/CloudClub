@@ -543,25 +543,39 @@ JSON OUTPUT:
                     parsed["it_earliest_year"] = str(min_year)
                     logger.warning("it_earliest_year_derived", year=min_year)
             
-            # Derive SFDC year - ULTRA-STRICT TITLE-ONLY
             if not parsed.get("sfdc_earliest_year"):
                 min_year = None
                 sfdc_jobs = []
                 
                 for exp in parsed.get("experiences", []):
                     job_title = exp.get("job_title", "")
+                    job_summary = exp.get("job_summary", "")  # ✅ FIX: Extract job_summary
                     start_date = exp.get("job_start_date")
                     
-                    if not start_date or not job_title:
+                    if not start_date:
                         continue
                     
-                    title_lower = job_title.lower()
-                    is_sfdc_title = ("salesforce" in title_lower or "sfdc" in title_lower)
+                    # Check BOTH title AND description for Salesforce mentions
+                    title_lower = job_title.lower() if job_title else ""
+                    summary_lower = job_summary.lower() if job_summary else ""
                     
-                    if is_sfdc_title:
+                    
+                    is_sfdc_job = (
+                        "salesforce" in title_lower or 
+                        "sfdc" in title_lower or
+                        "salesforce" in summary_lower or
+                        "sfdc" in summary_lower
+                    )
+                    
+                    if is_sfdc_job: 
                         try:
                             year = int(str(start_date)[:4])
-                            sfdc_jobs.append({"title": job_title, "year": year})
+                            sfdc_jobs.append({
+                                "title": job_title,
+                                "year": year,
+                                "has_sfdc_in_title": "salesforce" in title_lower or "sfdc" in title_lower,
+                                "has_sfdc_in_description": "salesforce" in summary_lower or "sfdc" in summary_lower
+                            })
                             
                             if min_year is None or year < min_year:
                                 min_year = year
@@ -572,7 +586,7 @@ JSON OUTPUT:
                     parsed["sfdc_earliest_year"] = str(min_year)
                     logger.warning("sfdc_earliest_year_derived", year=min_year, jobs=sfdc_jobs)
                 else:
-                    logger.error("NO_SALESFORCE_JOBS_IN_TITLES")
+                    logger.error("NO_SALESFORCE_JOBS_FOUND")
                     parsed["sfdc_earliest_year"] = None
             
             # Ensure skill structure for ALL experiences
