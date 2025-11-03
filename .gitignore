@@ -9,3 +9,7 @@ htmlcov
 .DS_Store
 .env
 .env.example
+# Local env files
+.env
+.env.*
+*.env

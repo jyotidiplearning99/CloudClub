@@ -1,5 +1,5 @@
 """
-Pydantic schemas with ALL Excel fields INCLUDING AppExchange products.
+Pydantic schemas with ALL requested fields including international timezone support.
 """
 
 from pydantic import BaseModel, Field, EmailStr, validator
@@ -34,10 +34,7 @@ class ClientProject(BaseModel):
     project_start_date: Optional[str] = Field(None)
     project_end_date: Optional[str] = Field(None)
     products: List[str] = Field(default_factory=list)
-    
-    # ADD THIS LINE (Excel requirement):
     project_sfdc_appexchange_products: List[str] = Field(default_factory=list)
-    
     project_scope_summary: Optional[str] = Field(None)
 
 
@@ -50,9 +47,11 @@ class Experience(BaseModel):
     job_title: Optional[str] = Field(None)
     job_start_date: Optional[str] = Field(None)
     job_end_date: Optional[str] = Field(None)
-    products: List[str] = Field(default_factory=list)
     
-    # ADD THIS LINE (Excel requirement):
+    job_summary: Optional[str] = Field(None, 
+        description="2-3 sentence summary of role, company type, products, and outcomes")
+    
+    products: List[str] = Field(default_factory=list)
     sfdc_appexchange_products: List[str] = Field(default_factory=list)
     
     company_is_sfdc_client: Optional[str] = Field(None)
@@ -102,6 +101,13 @@ class Experience(BaseModel):
         return v
 
 
+class TimezoneInfo(BaseModel):
+    """Timezone information."""
+    timezone: str = Field(..., description="IANA timezone name (e.g., America/New_York)")
+    utc_offset: str = Field(..., description="UTC offset (e.g., -05:00)")
+    current_time: str = Field(..., description="Current time in timezone (YYYY-MM-DD HH:MM)")
+
+
 class CompaniesSummary(BaseModel):
     """Two-category summary."""
     vendors: List[str] = Field(default_factory=list)
@@ -109,14 +115,24 @@ class CompaniesSummary(BaseModel):
 
 
 class CandidateProfile(BaseModel):
-    """Complete profile with ALL Excel schema fields."""
+    """Complete profile with ALL requested enhancements including international support."""
     
     full_name: str = Field(...)
     emails: List[EmailStr] = Field(default_factory=list)
     phones: List[str] = Field(default_factory=list)
     links: Optional[SocialLinks] = Field(None)
     
-    candidate_location: Optional[str] = Field(None)
+    candidate_location: Optional[str] = Field(
+        None, 
+        description="City, State/Province or City, Country. None if not found."
+    )
+    
+    # NEW: Timezone information (international support)
+    timezone_info: Optional[TimezoneInfo] = Field(
+        None,
+        description="Timezone data extracted from location"
+    )
+    
     resume_header_title: Optional[str] = Field(None)
     
     it_earliest_year: Optional[str] = Field(None)
@@ -126,6 +142,21 @@ class CandidateProfile(BaseModel):
     
     candidate_overall_summary: Optional[str] = Field(None)
     most_recent_job_title: Optional[str] = Field(None)
+    
+    # Industry tracking
+    industry_summary: List[str] = Field(default_factory=list, 
+        description="All industries worked in: Insurance, Healthcare, etc.")
+    
+    industry_experience: Dict[str, Dict[str, int]] = Field(
+        default_factory=dict,
+        description="Format: {industry: {years: X, clients: Y}}"
+    )
+    
+    # Product tracking
+    product_experience: Dict[str, Dict[str, int]] = Field(
+        default_factory=dict,
+        description="Format: {product: {years: X, clients: Y}}"
+    )
     
     education: List[Education] = Field(default_factory=list)
     

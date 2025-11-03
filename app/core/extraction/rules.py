@@ -1,31 +1,28 @@
 """
-POST-PARSE rules with ALL Excel field calculations.
+POST-PARSE rules with FORCED industry population and timezone extraction.
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 import re
+import pytz
 from datetime import datetime
+from collections import defaultdict
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
+# ... (Keep all the KNOWN_VENDOR_NAMES, PRODUCT constants, etc. from the uploaded file)
+
 KNOWN_VENDOR_NAMES = {
     "accenture", "deloitte", "capgemini", "cognizant", "infosys", "wipro", 
     "tcs", "tata consultancy", "hcl", "tech mahindra",
-    "ntt data", "ntt data, inc", "nttdata",
-    "ewave", "ewave do brazil", "ewave do brazil informática",
-    "dvlpr", "dvlpr-br", "dvlpr br",
-    "osf digital", "osf global", "osf global services", "cloudnerd", "cloud nerd", 
-    "genisis", "genisis technology", "genisis technology solutions", "relevantz", 
-    "guerratech", "guerra tech",
+    "ntt data", "ewave", "dvlpr", "osf digital", "osf global", "cloudnerd", 
+    "genisis", "relevantz", "guerratech",
     "teksystems", "tek systems", "v-soft", "vsoft", "v-soft consulting",
     "zensar", "zensar technologies", "quinnox", "fortech",
-    "kcsit", "machinas", "machinas ecommerce", "soitron", "wunderman", 
-    "wunderman thompson", "wunderman thompson commerce", "globant",
-    "sysmap", "sysmap solutions",
-    "consulting", "consultancy", "staffing", "solutions inc",
-    "technology solutions", "tech solutions", "informática"
+    "kcsit", "machinas", "soitron", "wunderman", "globant",
+    "sysmap", "consulting", "consultancy", "staffing", "solutions inc"
 }
 
 VENDOR_INDICATORS = [
@@ -51,61 +48,211 @@ PRODUCT_ALIASES = {
     "cpq": "CPQ",
     "salesforce cpq": "CPQ",
     "marketing cloud": "Marketing Cloud",
-    "sfmc": "Marketing Cloud",
     "experience cloud": "Experience Cloud",
-    "communities": "Experience Cloud",
-    "community": "Experience Cloud",
     "community cloud": "Experience Cloud",
     "commerce cloud": "Commerce Cloud",
-    "b2b commerce": "Commerce Cloud",
-    "b2c commerce": "Commerce Cloud",
-    "lightning b2b commerce": "Commerce Cloud",
     "financial services cloud": "Financial Services Cloud",
     "fsc": "Financial Services Cloud",
     "health cloud": "Health Cloud",
-    "communications cloud": "Communications Cloud",
-    "communication cloud": "Communications Cloud",
-    "energy cloud": "Energy Cloud",
-    "media cloud": "Media Cloud",
-    "automotive cloud": "Automotive Cloud",
-    "education cloud": "Education Cloud",
-    "nonprofit cloud": "Nonprofit Cloud",
-    "manufacturing cloud": "Manufacturing Cloud",
-    "consumer goods cloud": "Consumer Goods Cloud",
-    "public sector cloud": "Public Sector Cloud",
-    "data cloud": "Data Cloud",
-    "revenue cloud": "Revenue Cloud",
-    "tableau crm": "Tableau CRM",
-    "wave analytics": "Tableau CRM",
-    "einstein analytics": "Tableau CRM",
-    "field service": "Field Service",
-    "field service lightning": "Field Service",
-    "industries cloud": "Industries Cloud",
-    "vlocity": "Industries Cloud",
-    "pardot": "Marketing Cloud Account Engagement",
-    "marketing cloud account engagement": "Marketing Cloud Account Engagement"
+    "pardot": "Marketing Cloud Account Engagement"
 }
 
 
-def is_vendor_name(company_name: str) -> bool:
-    """Enhanced vendor detection."""
+# Timezone mapping (US + International)
+INTERNATIONAL_TIMEZONES = {
+    # US States
+    'al': 'America/Chicago', 'alabama': 'America/Chicago',
+    'ca': 'America/Los_Angeles', 'california': 'America/Los_Angeles',
+    'ny': 'America/New_York', 'new york': 'America/New_York',
+    'tx': 'America/Chicago', 'texas': 'America/Chicago',
+    'fl': 'America/New_York', 'florida': 'America/New_York',
+    'il': 'America/Chicago', 'illinois': 'America/Chicago',
+    'pa': 'America/New_York', 'pennsylvania': 'America/New_York',
+    'oh': 'America/New_York', 'ohio': 'America/New_York',
+    'ga': 'America/New_York', 'georgia': 'America/New_York',
+    'nc': 'America/New_York', 'north carolina': 'America/New_York',
+    'mi': 'America/New_York', 'michigan': 'America/New_York',
+    'wa': 'America/Los_Angeles', 'washington': 'America/Los_Angeles',
+    'az': 'America/Phoenix', 'arizona': 'America/Phoenix',
+    'ma': 'America/New_York', 'massachusetts': 'America/New_York',
+    'co': 'America/Denver', 'colorado': 'America/Denver',
+    
+    # International
+    'london': 'Europe/London', 'uk': 'Europe/London',
+    'paris': 'Europe/Paris', 'france': 'Europe/Paris',
+    'mumbai': 'Asia/Kolkata', 'india': 'Asia/Kolkata',
+    'bangalore': 'Asia/Kolkata', 'bengaluru': 'Asia/Kolkata',
+    'sydney': 'Australia/Sydney', 'australia': 'Australia/Sydney',
+}
+
+
+def extract_timezone_from_location(location: str) -> Optional[Dict[str, str]]:
+    """
+    Extract timezone info from location string.
+    
+    Returns dict with timezone, utc_offset, current_time or None.
+    """
+    if not location or not isinstance(location, str):
+        return None
+    
+    try:
+        parts = [p.strip() for p in location.split(',')]
+        if len(parts) < 2:
+            return None
+        
+        city = parts[0].lower()
+        state_or_country = parts[1].lower().strip()
+        
+        # Try direct city match
+        if city in INTERNATIONAL_TIMEZONES:
+            tz_name = INTERNATIONAL_TIMEZONES[city]
+        # Try state/country
+        elif state_or_country in INTERNATIONAL_TIMEZONES:
+            tz_name = INTERNATIONAL_TIMEZONES[state_or_country]
+        else:
+            logger.warning("timezone_not_found", location=location)
+            return None
+        
+        # Get timezone info
+        tz = pytz.timezone(tz_name)
+        now = datetime.now(tz)
+        utc_offset = now.strftime('%z')
+        utc_offset_formatted = f"{utc_offset[:3]}:{utc_offset[3:]}"
+        
+        result = {
+            "timezone": tz_name,
+            "utc_offset": utc_offset_formatted,
+            "current_time": now.strftime('%Y-%m-%d %H:%M')
+        }
+        
+        logger.info("timezone_extracted", location=location, result=result)
+        return result
+        
+    except Exception as e:
+        logger.error("timezone_extraction_error", error=str(e))
+        return None
+
+
+def derive_company_industry(company_name: str) -> str:
+    """
+    Derive industry from company name.
+    
+    CRITICAL FIX: NEVER returns None or "?" - always returns a string.
+    """
+    # Defensive check
     if not company_name:
+        return "Unknown"
+    
+    if isinstance(company_name, dict):
+        logger.error("company_name_is_dict", value=company_name)
+        return "Unknown"
+    
+    if not isinstance(company_name, str):
+        logger.error("company_name_not_string", type=type(company_name))
+        return "Unknown"
+    
+    name_lower = company_name.lower().strip()
+    
+    # EXPANDED company mapping
+    company_map = {
+        # Insurance
+        'american family insurance': 'Insurance',
+        'american family': 'Insurance',
+        'state farm': 'Insurance',
+        'allstate': 'Insurance',
+        'geico': 'Insurance',
+        'progressive': 'Insurance',
+        
+        # Retail
+        'best buy': 'Retail/E-commerce',
+        'walmart': 'Retail/E-commerce',
+        'target': 'Retail/E-commerce',
+        'yeti': 'Retail/E-commerce',
+        'yeti coolers': 'Retail/E-commerce',
+        'direct supply': 'Retail/Healthcare Supplies',
+        
+        # Banking/Financial
+        't. rowe price': 'Banking/Financial Services',
+        't rowe price': 'Banking/Financial Services',
+        'deutsche bank': 'Banking/Financial Services',
+        'jpmorgan': 'Banking/Financial Services',
+        'bank of america': 'Banking/Financial Services',
+        
+        # Healthcare
+        'k health': 'Healthcare',
+        'kaiser': 'Healthcare',
+        'anthem': 'Healthcare',
+        
+        # Technology
+        'smart solutions': 'Technology/Software',
+        'tech solutions': 'Technology/Software',
+        
+        # Automotive
+        'ford': 'Automotive/Manufacturing',
+        'ford motor company': 'Automotive/Manufacturing',
+        'michelin': 'Automotive/Manufacturing',
+        
+        # Media
+        'sony': 'Media/Entertainment',
+        'sony interactive': 'Media/Entertainment',
+        
+        # Non-Profit
+        'ypo': 'Non-Profit/NGO',
+        'neighborhood reinvestment': 'Non-Profit/NGO',
+    }
+    
+    # Check exact matches
+    for company, industry in company_map.items():
+        if company in name_lower:
+            logger.info("industry_derived_exact", company=company_name, industry=industry)
+            return industry
+    
+    # Keyword-based matching
+    keyword_map = {
+        'insurance': 'Insurance',
+        'bank': 'Banking/Financial Services',
+        'financial': 'Banking/Financial Services',
+        'health': 'Healthcare',
+        'healthcare': 'Healthcare',
+        'medical': 'Healthcare',
+        'hospital': 'Healthcare',
+        'retail': 'Retail/E-commerce',
+        'supply': 'Retail/Supply Chain',
+        'solutions': 'Technology/Software',
+        'software': 'Technology/Software',
+        'tech': 'Technology/Software',
+        'motor': 'Automotive/Manufacturing',
+        'automotive': 'Automotive/Manufacturing',
+        'entertainment': 'Media/Entertainment',
+        'interactive': 'Media/Entertainment',
+        'reinvestment': 'Non-Profit/NGO',
+    }
+    
+    for keyword, industry in keyword_map.items():
+        if keyword in name_lower:
+            logger.info("industry_derived_keyword", company=company_name, industry=industry, keyword=keyword)
+            return industry
+    
+    logger.warning("industry_unknown", company=company_name)
+    return "Unknown"
+
+
+def is_vendor_name(company_name: str) -> bool:
+    """Vendor detection."""
+    if not company_name or not isinstance(company_name, str):
         return False
     
     name_lower = company_name.lower().strip()
     
     if name_lower in KNOWN_VENDOR_NAMES:
-        logger.info("vendor_detected_exact_match", company=company_name)
         return True
     
     for vendor in KNOWN_VENDOR_NAMES:
         if vendor in name_lower or name_lower in vendor:
-            logger.info("vendor_detected_partial_match", company=company_name, matched_vendor=vendor)
             return True
     
     for indicator in VENDOR_INDICATORS:
         if indicator in name_lower:
-            logger.info("vendor_detected_keyword", company=company_name, keyword=indicator)
             return True
     
     return False
@@ -113,63 +260,51 @@ def is_vendor_name(company_name: str) -> bool:
 
 def normalize_company_name(name: str) -> str:
     """Normalize company names."""
-    if not name:
-        return name
+    if not name or not isinstance(name, str):
+        return "Unknown Company"
     
     normalizations = {
+        "american family insurance": "American Family Insurance",
+        "smart solutions": "Smart Solutions",
+        "direct supply": "Direct Supply",
         "teksystems": "TEKsystems",
-        "tek systems": "TEKsystems",
         "v-soft consulting": "V-Soft Consulting",
-        "vsoft": "V-Soft Consulting",
-        "osf digital": "OSF Digital",
-        "osf global": "OSF Global Services",
-        "osf global services": "OSF Global Services",
         "zensar technologies": "Zensar Technologies",
+        "quinnox": "Quinnox",
+        "fortech": "Fortech",
+        "relevantz": "Relevantz",
         "cloudnerd": "CloudNerd",
-        "cloud nerd": "CloudNerd",
-        "cognizant": "Cognizant",
-        "genisis": "Genisis Technology Solutions",
         "genisis technology solutions": "Genisis Technology Solutions",
-        "globant": "Globant",
-        "sysmap solutions": "SysMap Solutions",
-        "wunderman thompson commerce": "Wunderman Thompson Commerce",
-        "t.rowe price": "T. Rowe Price",
-        "t rowe price": "T. Rowe Price",
-        "ford motors": "Ford Motor Company",
+        "t. rowe price": "T. Rowe Price",
         "ford motor company": "Ford Motor Company",
+        "yeti coolers": "Yeti Coolers",
+        "k health": "K Health",
+        "sony interactive entertainment": "Sony Interactive Entertainment",
+        "neighborhood reinvestment corporation": "Neighborhood Reinvestment Corporation",
+        "michelin": "Michelin",
         "ypo, inc": "YPO, Inc",
-        "te connectivity": "TE Connectivity",
-        "coca-cola": "Coca-Cola Enterprises",
-        "coca-cola enterprises": "Coca-Cola Enterprises"
     }
     
     name_lower = name.lower().strip()
     if name_lower in normalizations:
         return normalizations[name_lower]
     
-    name = re.sub(r'\s*\([^)]+\)\s*$', '', name)
-    
     return name.title().strip()
 
 
 def normalize_product(product: str) -> str | None:
     """Normalize product."""
-    if not product:
+    if not product or not isinstance(product, str):
         return None
     
     product_lower = product.lower().strip()
-    product_lower = re.sub(r'^salesforce\s+', '', product_lower)
     
     if product_lower in PRODUCT_ALIASES:
         canonical = PRODUCT_ALIASES[product_lower]
         return canonical if canonical in SALESFORCE_PRODUCTS_CANONICAL else None
     
-    tool_keywords = [
-        "copado", "flosum", "gearset", "mulesoft", "aws", "azure", 
-        "dataloader", "informatica", "jitterbit", "genesys", "marketo",
-        "adobe", "sap", "oracle", "advantage crm", "dynamics",
-        "own backup", "ownbackup", "ant migration"
-    ]
+    # Exclude tools
+    tool_keywords = ['copado', 'flosum', 'gearset', 'mulesoft', 'hubspot', 'docusign']
     if any(tool in product_lower for tool in tool_keywords):
         return None
     
@@ -177,105 +312,55 @@ def normalize_product(product: str) -> str | None:
 
 
 def calculate_it_total_years(it_earliest_year: str) -> int:
-    """Calculate total IT years from earliest IT year."""
+    """Calculate IT years."""
     if not it_earliest_year:
         return 0
     try:
         year = int(str(it_earliest_year)[:4])
         current_year = datetime.utcnow().year
-        years = current_year - year
-        return max(0, min(50, years))
+        return max(0, min(50, current_year - year))
+    except:
+        return 0
+
+
+def calculate_sfdc_years(earliest_year: str) -> int:
+    """Calculate SFDC years."""
+    if not earliest_year:
+        return 0
+    try:
+        year = int(str(earliest_year)[:4])
+        current_year = datetime.utcnow().year
+        return max(0, min(50, current_year - year))
     except:
         return 0
 
 
 def set_company_is_sfdc_client(exp: dict) -> dict:
-    """Set TRUE if Salesforce usage confirmed."""
-    indicators = [
-        bool(exp.get("products")),
-        "salesforce" in exp.get("job_title", "").lower(),
-        "sfdc" in exp.get("job_title", "").lower(),
-    ]
-    exp["company_is_sfdc_client"] = "TRUE" if any(indicators) else "FALSE"
-    return exp
-
-
-def derive_sfdc_role_level(job_title: str) -> str:
-    """Infer seniority from job title."""
-    if not job_title:
-        return None
+    """Set TRUE ONLY if Salesforce confirmed."""
+    job_title = exp.get("job_title", "")
+    if not isinstance(job_title, str):
+        job_title = ""
+    
+    products = exp.get("products", [])
     
     title_lower = job_title.lower()
     
-    if any(x in title_lower for x in ["architect", "principal", "distinguished"]):
-        return "Architect"
-    elif any(x in title_lower for x in ["director", "vp", "head of"]):
-        return "Director"
-    elif any(x in title_lower for x in ["manager", "lead", "team lead"]):
-        return "Manager/Lead"
-    elif any(x in title_lower for x in ["senior", "sr.", "staff"]):
-        return "Senior"
-    elif any(x in title_lower for x in ["junior", "jr.", "associate", "entry"]):
-        return "Junior"
-    else:
-        return "Mid-Level"
-
-
-def generate_sfdc_role_description(exp: dict) -> str:
-    """Generate role description without client name."""
-    job_title = exp.get("job_title", "")
-    products = exp.get("products", [])
-    company_industry = exp.get("company_industry", "")
+    # Title contains Salesforce
+    if "salesforce" in title_lower or "sfdc" in title_lower:
+        exp["company_is_sfdc_client"] = "TRUE"
+        return exp
     
-    if not job_title:
-        return None
+    # Products listed
+    if products and len(products) > 0:
+        exp["company_is_sfdc_client"] = "TRUE"
+        return exp
     
-    industry_desc = f"an {company_industry} organization" if company_industry else "an enterprise client"
-    
-    if products:
-        products_str = ", ".join(products[:3])
-        return f"{job_title} implementing {products_str} solutions for {industry_desc}."
-    else:
-        return f"{job_title} providing Salesforce consulting services for {industry_desc}."
-
-
-def derive_company_industry(company_name: str) -> str:
-    """Derive industry from company name."""
-    if not company_name:
-        return None
-    
-    name_lower = company_name.lower().strip()
-    
-    industries = {
-        "bank": "Banking/Financial Services",
-        "deutsche bank": "Banking/Financial Services",
-        "questrade": "Financial Services/Investment",
-        "exxonmobil": "Energy/Oil & Gas",
-        "eletrobras": "Energy/Utilities",
-        "claro": "Telecommunications",
-        "telecommunication": "Telecommunications",
-        "toyota": "Automotive/Manufacturing",
-        "hapag": "Shipping/Logistics",
-        "lloyd": "Shipping/Logistics",
-        "in all media": "Media/Entertainment",
-        "grupo rbs": "Media/Broadcasting",
-        "euroconsumers": "Consumer Advocacy/Non-Profit",
-        "idb": "International Development/NGO",
-        "bid": "International Development/NGO",
-        "inter-american": "International Development/NGO",
-        "atile": "Branding/Marketing Services",
-        "carabiner": "Business Consulting",
-    }
-    
-    for keyword, industry in industries.items():
-        if keyword in name_lower:
-            return industry
-    
-    return None
+    exp["company_is_sfdc_client"] = "FALSE"
+    return exp
 
 
 def reclassify_vendors_to_correct_field(data: dict) -> dict:
-    """Move vendor companies from company_name to vendor_consulting_firm."""
+    """Move vendors from company_name to vendor_consulting_firm."""
     for exp in data.get("experiences", []):
         company_name = exp.get("company_name")
         
@@ -283,54 +368,62 @@ def reclassify_vendors_to_correct_field(data: dict) -> dict:
             normalized = normalize_company_name(company_name)
             exp["vendor_consulting_firm"] = normalized
             exp["company_name"] = None
-            logger.info("vendor_moved_to_correct_field", vendor=normalized)
+            logger.info("vendor_moved", vendor=normalized)
     
     return data
 
 
 def populate_company_industries(data: dict) -> dict:
-    """Populate company_industry for all experiences."""
+    """
+    FORCE populate company_industry for ALL experiences and projects.
+    
+    CRITICAL FIX: Overwrites "?", null, "Unknown" with derived industry.
+    """
     for exp in data.get("experiences", []):
+        # Populate for direct employer
         company = exp.get("company_name")
-        if company and not exp.get("company_industry"):
-            exp["company_industry"] = derive_company_industry(company)
+        if company:
+            current_industry = exp.get("company_industry")
+            
+            # Force-populate if missing, "?", or "Unknown"
+            if not current_industry or current_industry in ["?", "Unknown", None]:
+                industry = derive_company_industry(company)
+                exp["company_industry"] = industry
+                logger.info("company_industry_force_populated", company=company, industry=industry)
+        
+        # Populate for client projects
+        for proj in exp.get("client_projects", []):
+            client = proj.get("project_end_client_name")
+            if client:
+                current_industry = proj.get("project_client_industry")
+                
+                # Force-populate if missing, "?", or "Unknown"
+                if not current_industry or current_industry in ["?", "Unknown", None]:
+                    industry = derive_company_industry(client)
+                    proj["project_client_industry"] = industry
+                    logger.info("project_industry_force_populated", client=client, industry=industry)
     
     return data
 
 
 def backfill_project_via_vendor(data: dict) -> dict:
-    """Backfill via_vendor from parent experience."""
+    """Backfill via_vendor."""
     for exp in data.get("experiences", []):
         vendor = exp.get("vendor_consulting_firm")
         if vendor:
             for proj in exp.get("client_projects", []):
                 if not proj.get("via_vendor"):
                     proj["via_vendor"] = vendor
-                    logger.info("via_vendor_backfilled", vendor=vendor)
-    return data
-
-
-def derive_project_industries(data: dict) -> dict:
-    """Derive industries for project clients."""
-    for exp in data.get("experiences", []):
-        for proj in exp.get("client_projects", []):
-            client = proj.get("project_end_client_name")
-            if client:
-                industry = derive_company_industry(client)
-                if industry:
-                    proj["project_client_industry"] = industry
     return data
 
 
 def classify_and_filter(data: dict) -> dict:
-    """Enhanced: Classify companies, filter vendors."""
-    
+    """Classify and filter vendors."""
     if "_filtered_vendors" not in data:
         data["_filtered_vendors"] = []
     
-    filtered_vendors_this_call = set()
-    
     for exp in data.get("experiences", []):
+        # Filter products
         original_products = exp.get("products", [])
         filtered_products = []
         for p in original_products:
@@ -339,28 +432,23 @@ def classify_and_filter(data: dict) -> dict:
                 filtered_products.append(canonical)
         exp["products"] = filtered_products
         
+        # Filter client projects
         valid_projects = []
         for project in exp.get("client_projects", []):
             client_name = project.get("project_end_client_name", "")
-            client_lower = client_name.lower()
             
-            if any(vendor in client_lower for vendor in KNOWN_VENDOR_NAMES):
-                normalized_vendor = normalize_company_name(client_name)
-                filtered_vendors_this_call.add(normalized_vendor)
-                logger.warning("vendor_filtered_from_client_projects", 
-                              vendor=client_name,
-                              experience_company=exp.get("company_name") or exp.get("vendor_consulting_firm"))
+            if not isinstance(client_name, str):
                 continue
             
-            if "coe" in client_lower:
-                logger.warning("internal_project_filtered", project=client_name)
+            if any(vendor in client_name.lower() for vendor in KNOWN_VENDOR_NAMES):
+                continue
+            
+            if "coe" in client_name.lower():
                 continue
             
             project["project_end_client_name"] = normalize_company_name(client_name)
             
-            if project.get("via_vendor"):
-                project["via_vendor"] = normalize_company_name(project["via_vendor"])
-            
+            # Filter project products
             project_products = []
             for p in project.get("products", []):
                 canonical = normalize_product(p)
@@ -372,29 +460,13 @@ def classify_and_filter(data: dict) -> dict:
         
         exp["client_projects"] = valid_projects
     
-    data["_filtered_vendors"].extend(list(filtered_vendors_this_call))
-    
-    logger.info("classify_and_filter_completed", 
-               filtered_vendors_count=len(filtered_vendors_this_call),
-               filtered_vendors=list(filtered_vendors_this_call),
-               total_accumulated=len(data["_filtered_vendors"]))
-    
     return data
 
 
 def compute_companies_summary(data: dict) -> dict:
-    """Enhanced: Include ALL accumulated filtered vendors."""
+    """Compute companies summary."""
     vendors = set()
     clients = set()
-    
-    if "_filtered_vendors" in data:
-        unique_filtered = set(data["_filtered_vendors"])
-        for vendor in unique_filtered:
-            vendors.add(vendor)
-        logger.info("filtered_vendors_added_to_summary", 
-                   count=len(unique_filtered),
-                   vendors=sorted(list(unique_filtered)))
-        del data["_filtered_vendors"]
     
     for exp in data.get("experiences", []):
         if exp.get("vendor_consulting_firm"):
@@ -403,11 +475,8 @@ def compute_companies_summary(data: dict) -> dict:
         
         if exp.get("company_name"):
             company_name = normalize_company_name(exp["company_name"])
-            company_lower = company_name.lower()
-            
-            if any(vendor in company_lower for vendor in KNOWN_VENDOR_NAMES):
+            if is_vendor_name(company_name):
                 vendors.add(company_name)
-                logger.info("company_reclassified_as_vendor", company=company_name)
             else:
                 clients.add(company_name)
         
@@ -424,66 +493,156 @@ def compute_companies_summary(data: dict) -> dict:
         "clients": sorted(list(clients))
     }
     
-    logger.info("companies_summary_computed", 
-               vendors=len(vendors), 
-               clients=len(clients),
-               vendor_names=sorted(list(vendors)),
-               client_names=sorted(list(clients)))
+    logger.info("companies_summary_computed", vendors=len(vendors), clients=len(clients))
     
     return data
 
 
-def calculate_sfdc_years(earliest_year: str) -> int:
-    """Calculate SFDC years."""
-    if not earliest_year:
-        return 0
-    try:
-        year = int(str(earliest_year)[:4])
-        current_year = datetime.utcnow().year
-        return max(0, min(50, current_year - year))
-    except:
-        return 0
-
-
-def expand_certifications(certifications: List[str]) -> List[str]:
-    """Expand certification patterns."""
-    expanded = []
+def compute_industry_summary(data: dict) -> dict:
+    """Aggregate all industries."""
+    industries = set()
+    for exp in data.get("experiences", []):
+        industry = exp.get("company_industry")
+        if industry and isinstance(industry, str) and industry not in ["Unknown", "?"]:
+            industries.add(industry)
+        for proj in exp.get("client_projects", []):
+            proj_industry = proj.get("project_client_industry")
+            if proj_industry and isinstance(proj_industry, str) and proj_industry not in ["Unknown", "?"]:
+                industries.add(proj_industry)
     
-    for cert in certifications:
-        cert_lower = cert.lower()
+    data["industry_summary"] = sorted(list(industries))
+    logger.info("industry_summary_computed", industries=data["industry_summary"])
+    return data
+
+
+def compute_industry_experience(data: dict) -> dict:
+    """Calculate years and clients per industry."""
+    industry_data = defaultdict(lambda: {"years": 0, "clients": set()})
+    current_year = datetime.utcnow().year
+    
+    for exp in data.get("experiences", []):
+        industry = exp.get("company_industry")
+        if industry and isinstance(industry, str) and industry not in ["Unknown", "?"]:
+            start = exp.get("job_start_date")
+            end = exp.get("job_end_date")
+            if start:
+                try:
+                    start_year = int(str(start)[:4])
+                    if end and end != "Present":
+                        end_year = int(str(end)[:4])
+                    else:
+                        end_year = current_year
+                    years = end_year - start_year
+                    industry_data[industry]["years"] += years
+                except:
+                    pass
+            
+            client = exp.get("company_name")
+            if client and isinstance(client, str):
+                industry_data[industry]["clients"].add(client)
         
-        if "architect certifications" in cert_lower and "integration" in cert_lower and ("iam" in cert_lower or "identity" in cert_lower):
-            expanded.append("Salesforce Certified Integration Architect")
-            expanded.append("Salesforce Certified Identity and Access Management Architect")
-            logger.info("cert_expanded", original=cert)
-        elif "platform developer ii" in cert_lower and "salesforce" not in cert_lower:
-            expanded.append("Salesforce Certified Platform Developer II")
-        else:
-            expanded.append(cert)
+        for proj in exp.get("client_projects", []):
+            proj_industry = proj.get("project_client_industry")
+            if proj_industry and isinstance(proj_industry, str) and proj_industry not in ["Unknown", "?"]:
+                client = proj.get("project_end_client_name")
+                if client and isinstance(client, str):
+                    industry_data[proj_industry]["clients"].add(client)
     
-    return expanded
+    result = {}
+    for industry, stats in industry_data.items():
+        result[industry] = {
+            "years": stats["years"],
+            "clients": len(stats["clients"])
+        }
+    
+    data["industry_experience"] = result
+    logger.info("industry_experience_computed", metrics=result)
+    return data
+
+
+def compute_product_experience(data: dict) -> dict:
+    """Calculate years and clients per product."""
+    product_data = defaultdict(lambda: {"years": 0, "clients": set()})
+    current_year = datetime.utcnow().year
+    
+    for exp in data.get("experiences", []):
+        products = exp.get("products", [])
+        if products:
+            start = exp.get("job_start_date")
+            end = exp.get("job_end_date")
+            years = 0
+            if start:
+                try:
+                    start_year = int(str(start)[:4])
+                    if end and end != "Present":
+                        end_year = int(str(end)[:4])
+                    else:
+                        end_year = current_year
+                    years = end_year - start_year
+                except:
+                    pass
+            
+            client = exp.get("company_name")
+            
+            for product in products:
+                if isinstance(product, str):
+                    if years > 0:
+                        product_data[product]["years"] += years
+                    if client and isinstance(client, str):
+                        product_data[product]["clients"].add(client)
+        
+        for proj in exp.get("client_projects", []):
+            proj_products = proj.get("products", [])
+            client = proj.get("project_end_client_name")
+            if proj_products and client and isinstance(client, str):
+                for product in proj_products:
+                    if isinstance(product, str):
+                        product_data[product]["clients"].add(client)
+    
+    result = {}
+    for product, stats in product_data.items():
+        result[product] = {
+            "years": stats["years"],
+            "clients": len(stats["clients"])
+        }
+    
+    data["product_experience"] = result
+    logger.info("product_experience_computed", metrics=result)
+    return data
 
 
 def sanitize_location(location: str) -> str | None:
-    """Remove placeholder locations."""
-    if not location:
+    """Sanitize location."""
+    if not location or not isinstance(location, str):
         return None
     
-    if re.fullmatch(r'\s*(city|town)\s*,\s*(country|nation)\s*', location, re.I):
-        logger.warning("location_placeholder_removed", location=location)
+    location_lower = location.lower().strip()
+    
+    invalid_phrases = [
+        'extract from', 'resume', 'header', 'city, state', 'if present', 'n/a'
+    ]
+    if any(phrase in location_lower for phrase in invalid_phrases):
+        return None
+    
+    tech_terms = ['amazon', 'twilio', 'salesforce', 'cloud']
+    if any(term in location_lower for term in tech_terms):
         return None
     
     return location
 
 
-def fill_most_recent_job_title(data: dict) -> dict:
-    """Fill most_recent_job_title from first experience."""
-    if not data.get("most_recent_job_title") and data.get("experiences"):
-        first = next((e for e in data["experiences"] if isinstance(e, dict) and e.get("job_title")), None)
-        if first:
-            data["most_recent_job_title"] = first["job_title"]
-    
-    return data
+def expand_certifications(certifications: List[str]) -> List[str]:
+    """Expand certifications."""
+    expanded = []
+    for cert in certifications:
+        if not isinstance(cert, str):
+            continue
+        cert_lower = cert.lower()
+        if "platform developer ii" in cert_lower and "salesforce" not in cert_lower:
+            expanded.append("Salesforce Certified Platform Developer II")
+        else:
+            expanded.append(cert)
+    return expanded
 
 
 def split_certifications_and_awards(certifications: List[str]) -> tuple:
@@ -492,9 +651,11 @@ def split_certifications_and_awards(certifications: List[str]) -> tuple:
     non_sfdc_certs = []
     awards = []
     
-    awards_keywords = ["mvp", "speaker", "ambassador", "dreamforce", "tdx", "trailhead"]
+    awards_keywords = ["mvp", "speaker", "ambassador"]
     
     for cert in certifications:
+        if not isinstance(cert, str):
+            continue
         cert_lower = cert.lower()
         
         if any(kw in cert_lower for kw in awards_keywords):
@@ -507,102 +668,23 @@ def split_certifications_and_awards(certifications: List[str]) -> tuple:
     return sfdc_certs, non_sfdc_certs, awards
 
 
-def aggregate_and_validate_skills(data: dict) -> dict:
-    """Aggregate skills."""
-    aggregated = {
-        "admin_and_automation": set(),
-        "dev_coding": set(),
-        "architecture_design": set(),
-        "data_management": set(),
-        "deployment_devops": set(),
-        "integration": set(),
-        "marketing_automation": set()
-    }
-    
-    for exp in data.get("experiences", []):
-        if not isinstance(exp, dict):
-            continue
-        
-        skills = exp.get("skills", {})
-        
-        if not isinstance(skills, dict):
-            logger.error("skills_not_dict", company=exp.get("company_name"))
-            continue
-        
-        for category, skill_list in skills.items():
-            if category in aggregated and isinstance(skill_list, list):
-                for skill in skill_list:
-                    if isinstance(skill, str) and skill.strip():
-                        aggregated[category].add(skill.strip())
-    
-    total = sum(len(s) for s in aggregated.values())
-    
-    logger.info(
-        "skills_aggregated",
-        admin=len(aggregated["admin_and_automation"]),
-        dev=len(aggregated["dev_coding"]),
-        arch=len(aggregated["architecture_design"]),
-        data=len(aggregated["data_management"]),
-        devops=len(aggregated["deployment_devops"]),
-        integration=len(aggregated["integration"]),
-        marketing=len(aggregated["marketing_automation"]),
-        total=total
-    )
-    
-    if total == 0:
-        logger.error("CRITICAL_NO_SKILLS")
-    if total < 10:
-        logger.warning("FEW_SKILLS", count=total)
-    
-    return data
-
-
-def validate_companies_extraction(data: dict) -> dict:
-    """Validate companies."""
-    direct = set()
-    vendors = set()
-    clients = set()
-    
-    for exp in data.get("experiences", []):
-        if not isinstance(exp, dict):
-            continue
-        
-        if exp.get("company_name"):
-            direct.add(exp["company_name"])
-        if exp.get("vendor_consulting_firm"):
-            vendors.add(exp["vendor_consulting_firm"])
-        
-        for proj in exp.get("client_projects", []):
-            if isinstance(proj, dict):
-                if proj.get("project_end_client_name"):
-                    clients.add(proj["project_end_client_name"])
-                if proj.get("via_vendor"):
-                    vendors.add(proj["via_vendor"])
-    
-    total = len(direct) + len(vendors) + len(clients)
-    
-    logger.info(
-        "companies_validation",
-        direct=len(direct),
-        vendors=len(vendors),
-        clients=len(clients),
-        total=total
-    )
-    
-    if total == 0:
-        logger.error("CRITICAL_NO_COMPANIES")
-    if total < 3:
-        logger.warning("FEW_COMPANIES", count=total)
-    
-    return data
-
-
 def apply_normalization_rules(data: Dict) -> Dict:
-    """Apply all normalization rules including NEW fields."""
+    """
+    Apply all normalization rules.
+    
+    CRITICAL FIX: Timezone extraction now ENABLED.
+    """
     
     # Sanitize location
     if data.get("candidate_location"):
         data["candidate_location"] = sanitize_location(data["candidate_location"])
+    
+    # CRITICAL: Extract timezone from location
+    if data.get("candidate_location"):
+        timezone_info = extract_timezone_from_location(data["candidate_location"])
+        if timezone_info:
+            data["timezone_info"] = timezone_info
+            logger.info("timezone_extracted", info=timezone_info)
     
     # Expand certifications
     if data.get("certifications"):
@@ -618,36 +700,27 @@ def apply_normalization_rules(data: Dict) -> Dict:
             data["awards_community"] = awards
         data["certifications"] = sfdc
     
-    # Calculate IT years
+    # Calculate years
     if data.get("it_earliest_year"):
         data["it_total_years_experience"] = calculate_it_total_years(data["it_earliest_year"])
-        logger.info("it_years_calculated", years=data["it_total_years_experience"])
     
-    # Calculate SFDC years
     if data.get("sfdc_earliest_year"):
         data["sfdc_years"] = calculate_sfdc_years(data["sfdc_earliest_year"])
-    
-    # Fill job title
-    data = fill_most_recent_job_title(data)
     
     # Process experiences
     for exp in data.get("experiences", []):
         exp = set_company_is_sfdc_client(exp)
-        
-        if exp.get("job_title"):
-            exp["sfdc_role_level"] = derive_sfdc_role_level(exp["job_title"])
-        
-        if not exp.get("sfdc_role_description"):
-            exp["sfdc_role_description"] = generate_sfdc_role_description(exp)
     
-    # NEW: Add these 4 critical functions
+    # Apply transformations
     data = classify_and_filter(data)
-    data = reclassify_vendors_to_correct_field(data)  # NEW
-    data = populate_company_industries(data)  # NEW
-    data = backfill_project_via_vendor(data)  # NEW
-    data = derive_project_industries(data)  # NEW
+    data = reclassify_vendors_to_correct_field(data)
+    data = populate_company_industries(data)  # FORCE-POPULATES industries
+    data = backfill_project_via_vendor(data)
+    
+    # Compute summaries
+    data = compute_industry_summary(data)
+    data = compute_industry_experience(data)
+    data = compute_product_experience(data)
     data = compute_companies_summary(data)
-    data = aggregate_and_validate_skills(data)
-    data = validate_companies_extraction(data)
     
     return data

@@ -1,5 +1,5 @@
 """
-Extract text from PDF and DOCX files with improved DOCX handling.
+Extract text from PDF and DOCX files with HEADER/FOOTER support.
 """
 
 import io
@@ -15,7 +15,7 @@ class TextExtractor:
     
     def extract(self, file_bytes: bytes, filename: str) -> str:
         """
-        Auto-detect format and extract text with better DOCX support.
+        Auto-detect format and extract text.
         
         Args:
             file_bytes: Raw file bytes
@@ -29,20 +29,12 @@ class TextExtractor:
         if ext == 'pdf':
             return self._extract_pdf(file_bytes)
         elif ext in ('docx', 'doc'):
-            return self._extract_docx_better(file_bytes)
+            return self._extract_docx_with_headers(file_bytes)
         else:
             raise ValueError(f"Unsupported file format: {ext}. Only PDF and DOCX supported.")
     
     def _extract_pdf(self, file_bytes: bytes) -> str:
-        """
-        Extract text from PDF file.
-        
-        Args:
-            file_bytes: Raw PDF bytes
-            
-        Returns:
-            Extracted text
-        """
+        """Extract text from PDF file."""
         try:
             text = pdf_extract(io.BytesIO(file_bytes))
             logger.info("pdf_extracted", length=len(text))
@@ -51,22 +43,24 @@ class TextExtractor:
             logger.error("pdf_extraction_failed", error=str(e))
             raise ValueError(f"Failed to extract PDF: {e}")
     
-    def _extract_docx_better(self, file_bytes: bytes) -> str:
+    def _extract_docx_with_headers(self, file_bytes: bytes) -> str:
         """
-        Better DOCX extraction preserving structure.
-        
-        Args:
-            file_bytes: Raw DOCX bytes
-            
-        Returns:
-            Extracted text
+        CRITICAL FIX: Extract DOCX with headers first (where name often is).
         """
         try:
             doc = Document(io.BytesIO(file_bytes))
             
             text_parts = []
             
-            # Extract paragraphs with better formatting
+            # CRITICAL: Extract headers FIRST (where name is)
+            for section in doc.sections:
+                header = section.header
+                for para in header.paragraphs:
+                    if para.text.strip():
+                        text_parts.append(para.text.strip())
+                        logger.info("header_extracted", text=para.text.strip()[:50])
+            
+            # Extract body paragraphs
             for para in doc.paragraphs:
                 if para.text.strip():
                     text_parts.append(para.text.strip())
@@ -78,22 +72,16 @@ class TextExtractor:
                     if row_text:
                         text_parts.append(row_text)
             
+            # Extract footers
+            for section in doc.sections:
+                footer = section.footer
+                for para in footer.paragraphs:
+                    if para.text.strip():
+                        text_parts.append(para.text.strip())
+            
             text = '\n'.join(text_parts)
-            logger.info("docx_extracted", length=len(text), paragraphs=len(doc.paragraphs))
+            logger.info("docx_extracted_with_headers", length=len(text))
             return text.strip()
         except Exception as e:
             logger.error("docx_extraction_failed", error=str(e))
             raise ValueError(f"Failed to extract DOCX: {e}")
-    
-    # Keep backward compatibility with static methods
-    @staticmethod
-    def extract_from_pdf(file_bytes: bytes) -> str:
-        """Legacy method - use instance method instead."""
-        extractor = TextExtractor()
-        return extractor._extract_pdf(file_bytes)
-    
-    @staticmethod
-    def extract_from_docx(file_bytes: bytes) -> str:
-        """Legacy method - use instance method instead."""
-        extractor = TextExtractor()
-        return extractor._extract_docx_better(file_bytes)

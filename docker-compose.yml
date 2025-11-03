@@ -1,0 +1,54 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  resume-parser:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: resume-parser-app
+    ports:
+      - "8000:8000"  # Change 8000 to your desired port
+    environment:
+      # OpenAI Configuration
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LLM_MODEL=gpt-4o-2024-08-06
+      - LLM_TEMPERATURE=0.0
+      - LLM_MAX_TOKENS=20000
+      
+      # Parsing Configuration
+      - MAX_RESUME_LENGTH=50000
+      
+      # Optional: Database or other services
+      # - DATABASE_URL=postgresql://user:pass@db:5432/dbname
+    
+    volumes:
+      # Mount code for development (comment out for production)
+      - ./app:/app/app
+      - ./logs:/app/logs
+    
+    restart: unless-stopped
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# Optional: Add database service
+# services:
+#   db:
+#     image: postgres:15
+#     environment:
+#       - POSTGRES_DB=resume_parser
+#       - POSTGRES_USER=parser
+#       - POSTGRES_PASSWORD=secure_password
+#     volumes:
+#       - postgres_data:/var/lib/postgresql/data
+#     ports:
+#       - "5432:5432"
+
+# volumes:
+#   postgres_data:

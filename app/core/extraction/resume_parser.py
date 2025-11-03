@@ -1,13 +1,13 @@
 """
-Resume parser with comprehensive extraction and universal location support.
+Resume parser - FIXED VERSION (global product extraction removed)
 """
 
 import hashlib
 import re
-from typing import Optional, List, Set
+from typing import Optional, List
 from app.core.extraction.text_extractor import TextExtractor
 from app.core.extraction.llm_client import GPT4oClient
-from app.core.extraction.rules import apply_normalization_rules, classify_and_filter, PRODUCT_ALIASES, SALESFORCE_PRODUCTS_CANONICAL
+from app.core.extraction.rules import apply_normalization_rules, classify_and_filter
 from app.schemas.candidate import CandidateProfile
 from app.utils.logger import get_logger
 
@@ -15,7 +15,7 @@ logger = get_logger(__name__)
 
 
 class ResumeParser:
-    """Resume parser with comprehensive extraction."""
+    """Resume parser with all critical fixes."""
     
     def __init__(self):
         self.text_extractor = TextExtractor()
@@ -48,19 +48,6 @@ class ResumeParser:
         
         return "Unknown Candidate"
     
-    def _extract_products_globally(self, text: str) -> Set[str]:
-        """Extract products including Wave Analytics."""
-        text_lower = text.lower()
-        found = set()
-        
-        for alias, canonical in PRODUCT_ALIASES.items():
-            if re.search(rf"\b{re.escape(alias)}\b", text_lower):
-                if canonical in SALESFORCE_PRODUCTS_CANONICAL:
-                    found.add(canonical)
-        
-        logger.info("global_products_found", products=list(found), count=len(found))
-        return found
-    
     def _fix_summary_years_safely(self, data: dict) -> dict:
         """Safer summary fix - only touch "Salesforce ... years" patterns."""
         summary = data.get("candidate_overall_summary", "")
@@ -84,7 +71,7 @@ class ResumeParser:
         return data
     
     def _coerce_data_types(self, data: dict) -> dict:
-        """Coerce data types (safer links handling)."""
+        """Coerce data types."""
         if data.get("it_earliest_year") is not None:
             data["it_earliest_year"] = str(data["it_earliest_year"])
         if data.get("sfdc_earliest_year") is not None:
@@ -146,7 +133,7 @@ class ResumeParser:
             raise ValueError(f"Failed to extract text: {e}")
         
         try:
-            raw_data = await self.llm_client.extract_resume(text)
+            raw_data = await self.llm_client.extract_resume(text, filename)
             
             if not raw_data.get("full_name"):
                 fallback_name = self._extract_name_fallback(text)
@@ -183,11 +170,7 @@ class ResumeParser:
             logger.error("llm_extraction_failed", error=str(e))
             raise ValueError(f"Failed to parse: {e}")
         
-        global_products = self._extract_products_globally(text)
-        
-        for exp in raw_data.get("experiences", []):
-            if not exp.get("products"):
-                exp["products"] = sorted(global_products)
+        # CRITICAL: Global product extraction is REMOVED (was causing hallucination)
         
         try:
             raw_data = classify_and_filter(raw_data)
@@ -227,6 +210,8 @@ class ResumeParser:
             "parse_completed",
             candidate=profile.full_name,
             sfdc_years=profile.sfdc_years,
+            it_years=profile.it_total_years_experience,
+            industries=len(profile.industry_summary),
             total_companies=len(profile.companies_summary.vendors) + len(profile.companies_summary.clients) if profile.companies_summary else 0,
             sha256=sha256
         )
