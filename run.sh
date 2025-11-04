@@ -4,23 +4,23 @@
 
 case "$1" in
   setup)
-    echo "🚀 Setting up environment..."
+    echo " Setting up environment..."
     python3 -m venv .venv
     source .venv/bin/activate
     pip install --upgrade pip
     pip install -r requirements.txt
-    echo "✅ Setup complete!"
-    echo "⚠️  Copy .env.example to .env and add your OPENAI_API_KEY"
+    echo " Setup complete!"
+    echo " Copy .env.example to .env and add  OPENAI_API_KEY"
     ;;
   
   run)
-    echo "🚀 Starting server..."
+    echo "Starting server..."
     source .venv/bin/activate
     uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
     ;;
   
   test)
-    echo "🧪 Running tests..."
+    echo " Running tests..."
     source .venv/bin/activate
     pytest tests/ -v
     ;;
