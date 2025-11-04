@@ -13,3 +13,8 @@ htmlcov
 .env
 .env.*
 *.env
+
+cloudclub-osu/
+sync_to_osu.sh
+ngrok*
+*.tgz
