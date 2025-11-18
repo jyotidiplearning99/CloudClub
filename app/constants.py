@@ -93,6 +93,19 @@ SALESFORCE_PRODUCTS_CANONICAL = {
     "Net Zero Cloud",
     "Slack for Salesforce",
     "Safety Cloud",
+    "Agentforce Copilot Studio",
+    "Customer Community",
+    "Employee Community",
+    "Partner Community",
+    "Data Pipelines",
+    "External Services & OpenAPI",
+    "Identity",
+    "Platform Events",
+    "Sales Engagement",
+    "Salesforce Flow",
+    "Salesforce Industries",
+    "Salesforce Platform",
+    "Salesforce Shield",
 }
 
 # Product aliases (from Excel "Alternative / Abbreviation" column)
@@ -190,6 +203,26 @@ PRODUCT_ALIASES = {
     "sfcc": "Commerce Cloud B2C",
     "demandware": "Commerce Cloud B2C",
     "cloudcraze": "Commerce Cloud B2B",
+
+    "Agentforce Copilot Studio": "Agentforce Copilot Studio",
+    "Customer Community" : "Customer Community",
+    "Employee Community":"Employee Community",
+    "Partner Community": "Partner Community",
+
+    "Data Pipelines":"Data Pipelines",
+    "External Services & OpenAPI":"External Services & OpenAPI",
+    "Identity":"Identity",
+    "Platform Events":"Platform Events",
+
+    "Sales Engagement":"Sales Engagement",
+    "Salesforce Flow":"Salesforce Flow",
+    "Salesforce Industries":"Salesforce Industries",
+    "Salesforce Platform":"Salesforce Platform",
+    "Salesforce Shield":"Salesforce Shield",
+
+    "einstein bots": "Einstein AI",
+    "heroku": "Salesforce Platform",
+    "heroku platform": "Salesforce Platform",
 }
 
 
@@ -224,7 +257,7 @@ SKILLS_CATEGORIES = {
             "Version Control", "VS Code", "Code Builder",
             "Static Code Analysis", "Deployment Packaging", "Scratch Orgs",
             "JavaScript", "TypeScript", "Python", "Java", "Node.js",
-            "HTML", "CSS", "React", "Angular"
+            "HTML", "CSS", "React", "Angular","C# / .NET", "JSON", "PowerShell", "Shell / Bash", "XML"
         ]
     },
     "architecture_design": {
@@ -265,6 +298,116 @@ SKILLS_CATEGORIES = {
             "Azure Functions", "Heroku Connect"
         ]
     },
+    "data_reporting": {
+        "name": "Data & Reporting",
+        "skills": [
+            "CRM Analytics",
+            "Data Pipelines",
+            "Datorama",
+            "Einstein Discovery",
+            "Excel / Google Sheets",
+            "Power BI",
+            "Reporting Snapshots",
+            "SQL",
+            "Salesforce Data Cloud",
+            "Tableau",
+        ],
+    },
+
+    "ecosystem_tools": {
+        "name": "Ecosystem Tools & Extensions",
+        "skills": [
+            "Adobe Sign",
+            "Conga CPQ",
+            "Conga Composer",
+            "DocuSign",
+            "Formstack",
+            "LinkedIn Sales Navigator",
+            "Outreach",
+            "OwnBackup",
+            "Spanning Backup",
+            "SurveyMonkey",
+            "Veeva",
+            "ZoomInfo",
+            "nCino",
+        ],
+    },
+
+    "security_compliance": {
+        "name": "Security & Compliance",
+        "skills": [
+            "Compliance Frameworks",
+            "Data Classification",
+            "Encryption",
+            "Event Monitoring",
+            "Field-Level Security",
+            "MFA",
+            "OAuth / OpenID Connect",
+            "SSO",
+            "Salesforce Shield",
+            "Transaction Security",
+        ],
+    },
+
+    "delivery_methodology": {
+        "name": "Delivery & Methodology",
+        "skills": [
+            "Agile / Scrum / Kanban",
+            "Backlog Management",
+            "Collab & Whiteboarding",
+            "Confluence",
+            "Jira",
+            "Project Management",
+            "Sprint Planning",
+            "UAT / SIT / Regression",
+        ],
+    },
+
+    "business_analysis": {
+        "name": "Business Analyst / Scrum",
+        "skills": [
+            "Agile Ceremonies",
+            "Backlog Grooming",
+            "Business Case Development",
+            "Process Mapping",
+            "Requirements Gathering",
+            "Stakeholder Communication",
+            "UAT Coordination",
+            "User Stories & Acceptance Criteria",
+            "Wireframing / Prototyping",
+        ],
+    },
+
+    "project_program_management": {
+        "name": "Project / Program Management",
+        "skills": [
+            "Agile / Hybrid Delivery",
+            "Benefits Realization",
+            "Budget & Vendor Management",
+            "Change Management",
+            "Project Planning",
+            "Resource Management",
+            "Risk & Issue Management",
+            "Status & Governance",
+            "Tooling",
+        ],
+    },
+
+    "qa_testing": {
+        "name": "QA / Testing",
+        "skills": [
+            "API Testing",
+            "Automation Testing",
+            "Defect Tracking",
+            "Performance Testing",
+            "Regression Testing",
+            "SIT / UAT Execution",
+            "Test Case Design",
+            "Test Data Management",
+            "Test Strategy & Planning",
+        ],
+    },
+    
     "marketing_automation": {
         "name": "Marketing Automation",
         "skills": [
