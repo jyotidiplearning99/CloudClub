@@ -8,11 +8,16 @@ import pytz
 from datetime import datetime
 from collections import defaultdict
 from app.utils.logger import get_logger
+from app.constants import (
+    SALESFORCE_PRODUCTS_CANONICAL,
+    PRODUCT_ALIASES,
+    KNOWN_VENDOR_NAMES,
+    VENDOR_INDICATORS
+)
 
 logger = get_logger(__name__)
 
 
-# ... (Keep all the KNOWN_VENDOR_NAMES, PRODUCT constants, etc. from the uploaded file)
 
 KNOWN_VENDOR_NAMES = {
     "accenture", "deloitte", "capgemini", "cognizant", "infosys", "wipro", 
@@ -22,7 +27,7 @@ KNOWN_VENDOR_NAMES = {
     "teksystems", "tek systems", "v-soft", "vsoft", "v-soft consulting",
     "zensar", "zensar technologies", "quinnox", "fortech",
     "kcsit", "machinas", "soitron", "wunderman", "globant",
-    "sysmap", "consulting", "consultancy", "staffing", "solutions inc"
+    "sysmap", "consulting", "consultancy", "staffing", "solutions inc","Zscaler"
 }
 
 VENDOR_INDICATORS = [
@@ -132,6 +137,39 @@ def extract_timezone_from_location(location: str) -> Optional[Dict[str, str]]:
         logger.error("timezone_extraction_error", error=str(e))
         return None
 
+def normalize_product(product: str) -> str | None:
+    """
+    Normalize product using COMPREHENSIVE taxonomy from Excel.
+    
+    Uses PRODUCT_ALIASES from constants.py (derived from Excel).
+    """
+    if not product or not isinstance(product, str):
+        return None
+    
+    product_lower = product.lower().strip()
+    
+    # Remove "Salesforce" prefix
+    product_lower = re.sub(r'^salesforce\s+', '', product_lower)
+    
+    # Check aliases
+    if product_lower in PRODUCT_ALIASES:
+        canonical = PRODUCT_ALIASES[product_lower]
+        # Verify it's in canonical list
+        if canonical in SALESFORCE_PRODUCTS_CANONICAL:
+            logger.info("product_normalized", original=product, canonical=canonical)
+            return canonical
+    
+    # Exclude tools/middleware
+    tool_keywords = [
+        "copado", "flosum", "gearset", "hubspot", "docusign",
+        "qualtrics", "zoominfo", "outreach", "informatica", "workato"
+    ]
+    if any(tool in product_lower for tool in tool_keywords):
+        logger.info("product_excluded_tool", product=product)
+        return None
+    
+    logger.warning("product_not_recognized", product=product)
+    return None
 
 def derive_company_industry(company_name: str) -> str:
     """
