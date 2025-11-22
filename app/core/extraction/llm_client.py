@@ -183,32 +183,69 @@ class GPT4oClient:
             
             prompt = f"""Parse this resume per schema.
 
-**CRITICAL: EXTRACT COMPANY NAMES EXACTLY AS WRITTEN**
+**CRITICAL: COMPANY CLASSIFICATION - NO SALESFORCE ISV CATEGORY**
 
-For each work experience, extract:
-- company_name: Direct employer (e.g., "Zscaler", "Huntington Bank", "Target", "Accenture")
-- vendor_consulting_firm: IF company is a consulting firm, put name here instead
-- job_title: EXACTLY as written (e.g., "SALESFORCE SOLUTION ARCHITECT", "SOLUTION ARCHITECT")
-- job_start_date: Format as "YYYY-MM" or "YYYY"
-- job_end_date: Format as "YYYY-MM" or "Present" (NEVER use "?", NEVER use "YYYY-??")
+For each work experience, classify companies as EITHER:
 
-EXAMPLES:
-SALESFORCE SOLUTION ARCHITECT Zscaler 2022 - Current
+1. **vendor_consulting_firm**: IT consulting firms, staffing firms, OR Salesforce ISVs
+   - Examples: Accenture, Deloitte, Slolam, Gears CRM, Cloudware Connections, Eezentek
+   - Indicators: "consulting", "staffing", "solutions", "technologies" in name
+   - **IMPORTANT: ALL ISVs go here (NO separate "Salesforce ISV" category)**
+
+2. **company_name**: Direct employers who are NOT consulting firms
+   - Examples: Zscaler, Huntington Bank, Target
+   - Only use if company is an end client/direct employer
+
+**CRITICAL: EXTRACT CLIENT PROJECTS UNDER VENDORS**
+
+When a vendor has multiple client engagements listed, extract each as a client project:
+
+Example resume structure:
+SALESFORCE DEVELOPER Eezentek 2020 - Present
+City of Toronto (Jan 2023 - Present) • Implemented Service Cloud for case management • Integrated with legacy systems
+QC Careers (Jun 2021 - Dec 2022)
+• Built Experience Cloud portal • Customized Lightning components
+Lead Homes (Feb 2020 - May 2021) • Configured Sales Cloud
+text
+
+
+
 Parse as:
 {{
-  "company_name": "Zscaler",
-  "job_title": "SALESFORCE SOLUTION ARCHITECT",
-  "job_start_date": "2022",
-  "job_end_date": "Present"
-}}
-
-SOLUTION ARCHITECT Huntington Bank 2017 - 2022
-Parse as:
-{{
-  "company_name": "Huntington Bank",
-  "job_title": "SOLUTION ARCHITECT",
-  "job_start_date": "2017",
-  "job_end_date": "2022"
+  "vendor_consulting_firm": "Eezentek",
+  "company_name": null,
+  "job_title": "SALESFORCE DEVELOPER",
+  "job_start_date": "2020",
+  "job_end_date": "Present",
+  "client_projects": [
+    {{
+      "project_end_client_name": "City of Toronto",
+      "via_vendor": "Eezentek",
+      "project_client_industry": "Government/Public Sector",
+      "project_start_date": "2023-01",
+      "project_end_date": "Present",
+      "products": ["Service Cloud"],
+      "project_scope_summary": "Implemented Service Cloud for case management and integrated with legacy systems"
+    }},
+    {{
+      "project_end_client_name": "QC Careers",
+      "via_vendor": "Eezentek",
+      "project_client_industry": "Technology/Recruiting",
+      "project_start_date": "2021-06",
+      "project_end_date": "2022-12",
+      "products": ["Experience Cloud"],
+      "project_scope_summary": "Built Experience Cloud portal with custom Lightning components"
+    }},
+    {{
+      "project_end_client_name": "Lead Homes",
+      "via_vendor": "Eezentek",
+      "project_client_industry": "Real Estate",
+      "project_start_date": "2020-02",
+      "project_end_date": "2021-05",
+      "products": ["Sales Cloud"],
+      "project_scope_summary": "Configured Sales Cloud for lead management"
+    }}
+  ]
 }}
 
 **CRITICAL: SFDC START YEAR - CHECK TITLE AND DESCRIPTION**
@@ -220,6 +257,12 @@ Find EARLIEST year where EITHER:
 **PRODUCTS (ONLY IF EXPLICITLY NAMED):**
 Valid products: {products_list}
 
+Aliases to recognize:
+- "Pardot" → Marketing Cloud Account Engagement
+- "Community Cloud" → Experience Cloud
+- "Einstein Analytics" OR "Wave" → CRM Analytics
+- "FSC" → Financial Services Cloud
+
 **CONTACT:**
 Emails: {json.dumps(emails)}
 Location: {json.dumps(location)}
@@ -227,7 +270,7 @@ Location: {json.dumps(location)}
 **RESUME:**
 {text}
 
-**JSON:**
+**JSON OUTPUT:**
 {{
   "full_name": {json.dumps(name_from_header) if name_from_header else '"EXTRACT"'},
   "emails": {json.dumps(emails)},
@@ -239,14 +282,14 @@ Location: {json.dumps(location)}
   "certifications": [],
   "experiences": [
     {{
-      "company_name": "Company name EXACTLY as written",
-      "vendor_consulting_firm": "OR null",
+      "company_name": "Direct employer name OR null",
+      "vendor_consulting_firm": "Vendor/ISV name OR null",
       "company_industry": "Derive from context",
       "job_title": "EXACTLY as written",
       "job_start_date": "YYYY-MM or YYYY",
       "job_end_date": "YYYY-MM or Present (NEVER ?)",
       "job_summary": "2-3 sentences",
-      "products": [],
+      "products": ["ONLY if explicitly named"],
       "skills": {{
         "admin_and_automation": [],
         "dev_coding": [],
@@ -255,7 +298,18 @@ Location: {json.dumps(location)}
         "deployment_devops": [],
         "integration": [],
         "marketing_automation": []
-      }}
+      }},
+      "client_projects": [
+        {{
+          "project_end_client_name": "Client name",
+          "via_vendor": "Vendor if applicable",
+          "project_client_industry": "Derive from context",
+          "project_start_date": "YYYY-MM",
+          "project_end_date": "YYYY-MM or Present",
+          "products": ["ONLY if explicitly named"],
+          "project_scope_summary": "Brief description"
+        }}
+      ]
     }}
   ]
 }}"""

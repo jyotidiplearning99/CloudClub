@@ -18,51 +18,6 @@ from app.constants import (
 logger = get_logger(__name__)
 
 
-
-KNOWN_VENDOR_NAMES = {
-    "accenture", "deloitte", "capgemini", "cognizant", "infosys", "wipro", 
-    "tcs", "tata consultancy", "hcl", "tech mahindra",
-    "ntt data", "ewave", "dvlpr", "osf digital", "osf global", "cloudnerd", 
-    "genisis", "relevantz", "guerratech",
-    "teksystems", "tek systems", "v-soft", "vsoft", "v-soft consulting",
-    "zensar", "zensar technologies", "quinnox", "fortech",
-    "kcsit", "machinas", "soitron", "wunderman", "globant",
-    "sysmap", "consulting", "consultancy", "staffing", "solutions inc","Zscaler"
-}
-
-VENDOR_INDICATORS = [
-    "consulting", "consultancy", "staffing", "solutions", "services",
-    "technologies", "technology", "tech", "global services"
-]
-
-SALESFORCE_PRODUCTS_CANONICAL = {
-    "Sales Cloud", "Service Cloud", "Experience Cloud", "Marketing Cloud",
-    "Commerce Cloud", "CPQ",
-    "Financial Services Cloud", "Health Cloud", "Communications Cloud",
-    "Energy Cloud", "Media Cloud", "Automotive Cloud", 
-    "Education Cloud", "Nonprofit Cloud", "Manufacturing Cloud",
-    "Consumer Goods Cloud", "Public Sector Cloud",
-    "Data Cloud", "Tableau CRM", "Revenue Cloud",
-    "Field Service", "Industries Cloud", 
-    "Marketing Cloud Account Engagement"
-}
-
-PRODUCT_ALIASES = {
-    "sales cloud": "Sales Cloud",
-    "service cloud": "Service Cloud",
-    "cpq": "CPQ",
-    "salesforce cpq": "CPQ",
-    "marketing cloud": "Marketing Cloud",
-    "experience cloud": "Experience Cloud",
-    "community cloud": "Experience Cloud",
-    "commerce cloud": "Commerce Cloud",
-    "financial services cloud": "Financial Services Cloud",
-    "fsc": "Financial Services Cloud",
-    "health cloud": "Health Cloud",
-    "pardot": "Marketing Cloud Account Engagement"
-}
-
-
 # Timezone mapping (US + International)
 INTERNATIONAL_TIMEZONES = {
     # US States
@@ -81,6 +36,7 @@ INTERNATIONAL_TIMEZONES = {
     'az': 'America/Phoenix', 'arizona': 'America/Phoenix',
     'ma': 'America/New_York', 'massachusetts': 'America/New_York',
     'co': 'America/Denver', 'colorado': 'America/Denver',
+    'mn': 'America/Chicago', 'minnesota': 'America/Chicago',
     
     # International
     'london': 'Europe/London', 'uk': 'Europe/London',
@@ -92,11 +48,7 @@ INTERNATIONAL_TIMEZONES = {
 
 
 def extract_timezone_from_location(location: str) -> Optional[Dict[str, str]]:
-    """
-    Extract timezone info from location string.
-    
-    Returns dict with timezone, utc_offset, current_time or None.
-    """
+    """Extract timezone info from location string."""
     if not location or not isinstance(location, str):
         return None
     
@@ -108,17 +60,14 @@ def extract_timezone_from_location(location: str) -> Optional[Dict[str, str]]:
         city = parts[0].lower()
         state_or_country = parts[1].lower().strip()
         
-        # Try direct city match
         if city in INTERNATIONAL_TIMEZONES:
             tz_name = INTERNATIONAL_TIMEZONES[city]
-        # Try state/country
         elif state_or_country in INTERNATIONAL_TIMEZONES:
             tz_name = INTERNATIONAL_TIMEZONES[state_or_country]
         else:
             logger.warning("timezone_not_found", location=location)
             return None
         
-        # Get timezone info
         tz = pytz.timezone(tz_name)
         now = datetime.now(tz)
         utc_offset = now.strftime('%z')
@@ -137,65 +86,22 @@ def extract_timezone_from_location(location: str) -> Optional[Dict[str, str]]:
         logger.error("timezone_extraction_error", error=str(e))
         return None
 
-def normalize_product(product: str) -> str | None:
-    """
-    Normalize product using COMPREHENSIVE taxonomy from Excel.
-    
-    Uses PRODUCT_ALIASES from constants.py (derived from Excel).
-    """
-    if not product or not isinstance(product, str):
-        return None
-    
-    product_lower = product.lower().strip()
-    
-    # Remove "Salesforce" prefix
-    product_lower = re.sub(r'^salesforce\s+', '', product_lower)
-    
-    # Check aliases
-    if product_lower in PRODUCT_ALIASES:
-        canonical = PRODUCT_ALIASES[product_lower]
-        # Verify it's in canonical list
-        if canonical in SALESFORCE_PRODUCTS_CANONICAL:
-            logger.info("product_normalized", original=product, canonical=canonical)
-            return canonical
-    
-    # Exclude tools/middleware
-    tool_keywords = [
-        "copado", "flosum", "gearset", "hubspot", "docusign",
-        "qualtrics", "zoominfo", "outreach", "informatica", "workato"
-    ]
-    if any(tool in product_lower for tool in tool_keywords):
-        logger.info("product_excluded_tool", product=product)
-        return None
-    
-    logger.warning("product_not_recognized", product=product)
-    return None
 
 def derive_company_industry(company_name: str) -> str:
-    """
-    Derive industry from company name.
-    
-    CRITICAL FIX: NEVER returns None or "?" - always returns a string.
-    """
-    # Defensive check
-    if not company_name:
+    """Derive industry from company name. NEVER returns None or "?"."""
+    if not company_name or not isinstance(company_name, str):
         return "Unknown"
     
     if isinstance(company_name, dict):
         logger.error("company_name_is_dict", value=company_name)
         return "Unknown"
     
-    if not isinstance(company_name, str):
-        logger.error("company_name_not_string", type=type(company_name))
-        return "Unknown"
-    
     name_lower = company_name.lower().strip()
     
-    # EXPANDED company mapping
+    # Exact company mapping
     company_map = {
         # Insurance
         'american family insurance': 'Insurance',
-        'american family': 'Insurance',
         'state farm': 'Insurance',
         'allstate': 'Insurance',
         'geico': 'Insurance',
@@ -215,15 +121,16 @@ def derive_company_industry(company_name: str) -> str:
         'deutsche bank': 'Banking/Financial Services',
         'jpmorgan': 'Banking/Financial Services',
         'bank of america': 'Banking/Financial Services',
+        'huntington bank': 'Banking/Financial Services',
         
         # Healthcare
         'k health': 'Healthcare',
         'kaiser': 'Healthcare',
         'anthem': 'Healthcare',
         
-        # Technology
+        # Technology/Cybersecurity
+        'zscaler': 'Technology/Cybersecurity',
         'smart solutions': 'Technology/Software',
-        'tech solutions': 'Technology/Software',
         
         # Automotive
         'ford': 'Automotive/Manufacturing',
@@ -237,33 +144,39 @@ def derive_company_industry(company_name: str) -> str:
         # Non-Profit
         'ypo': 'Non-Profit/NGO',
         'neighborhood reinvestment': 'Non-Profit/NGO',
+        
+        # Government
+        'city of toronto': 'Government/Public Sector',
+        
+        # Real Estate
+        'lead homes': 'Real Estate',
+        
+        # Recruiting/HR
+        'qc careers': 'Technology/Recruiting',
     }
     
-    # Check exact matches
     for company, industry in company_map.items():
         if company in name_lower:
             logger.info("industry_derived_exact", company=company_name, industry=industry)
             return industry
     
-    # Keyword-based matching
+    # Keyword matching
     keyword_map = {
         'insurance': 'Insurance',
         'bank': 'Banking/Financial Services',
         'financial': 'Banking/Financial Services',
         'health': 'Healthcare',
         'healthcare': 'Healthcare',
-        'medical': 'Healthcare',
-        'hospital': 'Healthcare',
         'retail': 'Retail/E-commerce',
-        'supply': 'Retail/Supply Chain',
         'solutions': 'Technology/Software',
-        'software': 'Technology/Software',
         'tech': 'Technology/Software',
         'motor': 'Automotive/Manufacturing',
         'automotive': 'Automotive/Manufacturing',
         'entertainment': 'Media/Entertainment',
-        'interactive': 'Media/Entertainment',
-        'reinvestment': 'Non-Profit/NGO',
+        'city of': 'Government/Public Sector',
+        'government': 'Government/Public Sector',
+        'careers': 'Technology/Recruiting',
+        'homes': 'Real Estate',
     }
     
     for keyword, industry in keyword_map.items():
@@ -276,7 +189,7 @@ def derive_company_industry(company_name: str) -> str:
 
 
 def is_vendor_name(company_name: str) -> bool:
-    """Vendor detection."""
+    """Vendor detection using imported KNOWN_VENDOR_NAMES."""
     if not company_name or not isinstance(company_name, str):
         return False
     
@@ -321,6 +234,15 @@ def normalize_company_name(name: str) -> str:
         "neighborhood reinvestment corporation": "Neighborhood Reinvestment Corporation",
         "michelin": "Michelin",
         "ypo, inc": "YPO, Inc",
+        "zscaler": "Zscaler",
+        "huntington bank": "Huntington Bank",
+        "slolam": "Slolam",
+        "gears crm": "Gears CRM",
+        "cloudware connections": "Cloudware Connections",
+        "eezentek": "Eezentek",
+        "city of toronto": "City of Toronto",
+        "qc careers": "QC Careers",
+        "lead homes": "Lead Homes",
     }
     
     name_lower = name.lower().strip()
@@ -331,21 +253,29 @@ def normalize_company_name(name: str) -> str:
 
 
 def normalize_product(product: str) -> str | None:
-    """Normalize product."""
+    """Normalize product using imported PRODUCT_ALIASES."""
     if not product or not isinstance(product, str):
         return None
     
     product_lower = product.lower().strip()
+    product_lower = re.sub(r'^salesforce\s+', '', product_lower)
     
     if product_lower in PRODUCT_ALIASES:
         canonical = PRODUCT_ALIASES[product_lower]
-        return canonical if canonical in SALESFORCE_PRODUCTS_CANONICAL else None
+        if canonical in SALESFORCE_PRODUCTS_CANONICAL:
+            logger.info("product_normalized", original=product, canonical=canonical)
+            return canonical
     
     # Exclude tools
-    tool_keywords = ['copado', 'flosum', 'gearset', 'mulesoft', 'hubspot', 'docusign']
+    tool_keywords = [
+        'copado', 'flosum', 'gearset', 'mulesoft', 'hubspot', 'docusign',
+        'qualtrics', 'zoominfo', 'outreach', 'informatica', 'workato'
+    ]
     if any(tool in product_lower for tool in tool_keywords):
+        logger.info("product_excluded_tool", product=product)
         return None
     
+    logger.warning("product_not_recognized", product=product)
     return None
 
 
@@ -380,15 +310,12 @@ def set_company_is_sfdc_client(exp: dict) -> dict:
         job_title = ""
     
     products = exp.get("products", [])
-    
     title_lower = job_title.lower()
     
-    # Title contains Salesforce
     if "salesforce" in title_lower or "sfdc" in title_lower:
         exp["company_is_sfdc_client"] = "TRUE"
         return exp
     
-    # Products listed
     if products and len(products) > 0:
         exp["company_is_sfdc_client"] = "TRUE"
         return exp
@@ -412,30 +339,20 @@ def reclassify_vendors_to_correct_field(data: dict) -> dict:
 
 
 def populate_company_industries(data: dict) -> dict:
-    """
-    FORCE populate company_industry for ALL experiences and projects.
-    
-    CRITICAL FIX: Overwrites "?", null, "Unknown" with derived industry.
-    """
+    """FORCE populate company_industry for ALL experiences and projects."""
     for exp in data.get("experiences", []):
-        # Populate for direct employer
         company = exp.get("company_name")
         if company:
             current_industry = exp.get("company_industry")
-            
-            # Force-populate if missing, "?", or "Unknown"
             if not current_industry or current_industry in ["?", "Unknown", None]:
                 industry = derive_company_industry(company)
                 exp["company_industry"] = industry
                 logger.info("company_industry_force_populated", company=company, industry=industry)
         
-        # Populate for client projects
         for proj in exp.get("client_projects", []):
             client = proj.get("project_end_client_name")
             if client:
                 current_industry = proj.get("project_client_industry")
-                
-                # Force-populate if missing, "?", or "Unknown"
                 if not current_industry or current_industry in ["?", "Unknown", None]:
                     industry = derive_company_industry(client)
                     proj["project_client_industry"] = industry
@@ -445,7 +362,7 @@ def populate_company_industries(data: dict) -> dict:
 
 
 def backfill_project_via_vendor(data: dict) -> dict:
-    """Backfill via_vendor."""
+    """Backfill via_vendor for client projects."""
     for exp in data.get("experiences", []):
         vendor = exp.get("vendor_consulting_firm")
         if vendor:
@@ -456,10 +373,7 @@ def backfill_project_via_vendor(data: dict) -> dict:
 
 
 def classify_and_filter(data: dict) -> dict:
-    """Classify and filter vendors."""
-    if "_filtered_vendors" not in data:
-        data["_filtered_vendors"] = []
-    
+    """Classify and filter products and projects."""
     for exp in data.get("experiences", []):
         # Filter products
         original_products = exp.get("products", [])
@@ -707,11 +621,7 @@ def split_certifications_and_awards(certifications: List[str]) -> tuple:
 
 
 def apply_normalization_rules(data: Dict) -> Dict:
-    """
-    Apply all normalization rules.
-    
-    CRITICAL FIX: Timezone extraction now ENABLED.
-    """
+    """Apply all normalization rules. CRITICAL: Timezone extraction ENABLED."""
     
     # Sanitize location
     if data.get("candidate_location"):
@@ -752,7 +662,7 @@ def apply_normalization_rules(data: Dict) -> Dict:
     # Apply transformations
     data = classify_and_filter(data)
     data = reclassify_vendors_to_correct_field(data)
-    data = populate_company_industries(data)  # FORCE-POPULATES industries
+    data = populate_company_industries(data)
     data = backfill_project_via_vendor(data)
     
     # Compute summaries
