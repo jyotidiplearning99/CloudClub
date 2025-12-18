@@ -1,6 +1,5 @@
 """
-GPT-4o CLIENT - COMPREHENSIVE FIX
-Critical fix: Company names showing as "Unknown Client"
+GPT-4o CLIENT - COMPREHENSIVE FIX with 14 skill categories
 """
 
 import json
@@ -34,7 +33,7 @@ Return ONLY valid JSON."""
 
 
 class GPT4oClient:
-    """GPT-4o client with all fixes."""
+    """GPT-4o client with 14 skill categories."""
     
     def __init__(self):
         try:
@@ -164,7 +163,7 @@ class GPT4oClient:
         text: str, 
         filename: Optional[str] = None
     ) -> dict:
-        """Extract resume with ALL fixes."""
+        """Extract resume with ALL 14 skill categories."""
         try:
             if not text or not isinstance(text, str):
                 raise ValueError("Resume text must be a non-empty string")
@@ -178,7 +177,6 @@ class GPT4oClient:
             name_from_header = self.extract_name_from_header(text)
             emails, location = self.extract_email_and_location_from_header(text)
             
-            # Build comprehensive product list
             products_list = ", ".join(sorted(SALESFORCE_PRODUCTS_CANONICAL))
             
             prompt = f"""Parse this resume per schema.
@@ -198,55 +196,7 @@ For each work experience, classify companies as EITHER:
 
 **CRITICAL: EXTRACT CLIENT PROJECTS UNDER VENDORS**
 
-When a vendor has multiple client engagements listed, extract each as a client project:
-
-Example resume structure:
-SALESFORCE DEVELOPER Eezentek 2020 - Present
-City of Toronto (Jan 2023 - Present) • Implemented Service Cloud for case management • Integrated with legacy systems
-QC Careers (Jun 2021 - Dec 2022)
-• Built Experience Cloud portal • Customized Lightning components
-Lead Homes (Feb 2020 - May 2021) • Configured Sales Cloud
-text
-
-
-
-Parse as:
-{{
-  "vendor_consulting_firm": "Eezentek",
-  "company_name": null,
-  "job_title": "SALESFORCE DEVELOPER",
-  "job_start_date": "2020",
-  "job_end_date": "Present",
-  "client_projects": [
-    {{
-      "project_end_client_name": "City of Toronto",
-      "via_vendor": "Eezentek",
-      "project_client_industry": "Government/Public Sector",
-      "project_start_date": "2023-01",
-      "project_end_date": "Present",
-      "products": ["Service Cloud"],
-      "project_scope_summary": "Implemented Service Cloud for case management and integrated with legacy systems"
-    }},
-    {{
-      "project_end_client_name": "QC Careers",
-      "via_vendor": "Eezentek",
-      "project_client_industry": "Technology/Recruiting",
-      "project_start_date": "2021-06",
-      "project_end_date": "2022-12",
-      "products": ["Experience Cloud"],
-      "project_scope_summary": "Built Experience Cloud portal with custom Lightning components"
-    }},
-    {{
-      "project_end_client_name": "Lead Homes",
-      "via_vendor": "Eezentek",
-      "project_client_industry": "Real Estate",
-      "project_start_date": "2020-02",
-      "project_end_date": "2021-05",
-      "products": ["Sales Cloud"],
-      "project_scope_summary": "Configured Sales Cloud for lead management"
-    }}
-  ]
-}}
+When a vendor has multiple client engagements listed, extract each as a client project.
 
 **CRITICAL: SFDC START YEAR - CHECK TITLE AND DESCRIPTION**
 
@@ -257,11 +207,21 @@ Find EARLIEST year where EITHER:
 **PRODUCTS (ONLY IF EXPLICITLY NAMED):**
 Valid products: {products_list}
 
-Aliases to recognize:
-- "Pardot" → Marketing Cloud Account Engagement
-- "Community Cloud" → Experience Cloud
-- "Einstein Analytics" OR "Wave" → CRM Analytics
-- "FSC" → Financial Services Cloud
+**SKILLS CATEGORIES (14 categories):**
+- admin_and_automation: Flow Builder, Process Builder, Reports, Dashboards, Data Loader, etc.
+- dev_coding: Apex, LWC, Visualforce, JavaScript, Python, Java, etc.
+- architecture_design: Solution Design, Data Modeling, Integration Patterns, etc.
+- data_management: Data Migration, ETL, Data Quality, etc.
+- deployment_devops: Copado, Gearset, CI/CD, Git, etc.
+- integration: MuleSoft, REST API, Platform Events, etc.
+- data_reporting: CRM Analytics, Tableau, Einstein Discovery, SQL, etc.
+- ecosystem_tools: DocuSign, Conga, ZoomInfo, Veeva, etc.
+- security_compliance: Salesforce Shield, MFA, Encryption, SSO, etc.
+- delivery_methodology: Agile, Scrum, Jira, Sprint Planning, etc.
+- business_analysis: Requirements Gathering, User Stories, Process Mapping, etc.
+- project_program_management: Budget Management, Risk Management, etc.
+- qa_testing: Test Automation, Regression Testing, UAT, etc.
+- marketing_automation: SFMC, AMPScript, Journey Builder, Pardot, etc.
 
 **CONTACT:**
 Emails: {json.dumps(emails)}
@@ -297,6 +257,13 @@ Location: {json.dumps(location)}
         "data_management": [],
         "deployment_devops": [],
         "integration": [],
+        "data_reporting": [],
+        "ecosystem_tools": [],
+        "security_compliance": [],
+        "delivery_methodology": [],
+        "business_analysis": [],
+        "project_program_management": [],
+        "qa_testing": [],
         "marketing_automation": []
       }},
       "client_projects": [
@@ -413,7 +380,7 @@ Location: {json.dumps(location)}
                     logger.error("NO_SALESFORCE_EXPERIENCE_FOUND")
                     parsed["sfdc_earliest_year"] = None
             
-            # Ensure skill structure
+            # Ensure skill structure (ALL 14 CATEGORIES)
             for exp in parsed.get("experiences", []):
                 if "skills" not in exp or not isinstance(exp["skills"], dict):
                     exp["skills"] = {
@@ -423,6 +390,13 @@ Location: {json.dumps(location)}
                         "data_management": [],
                         "deployment_devops": [],
                         "integration": [],
+                        "data_reporting": [],
+                        "ecosystem_tools": [],
+                        "security_compliance": [],
+                        "delivery_methodology": [],
+                        "business_analysis": [],
+                        "project_program_management": [],
+                        "qa_testing": [],
                         "marketing_automation": []
                     }
             

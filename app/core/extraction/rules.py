@@ -1,5 +1,5 @@
 """
-POST-PARSE rules with FORCED industry population and timezone extraction.
+POST-PARSE rules with skills aggregation for general skills summary.
 """
 
 from typing import Dict, List, Optional
@@ -88,7 +88,7 @@ def extract_timezone_from_location(location: str) -> Optional[Dict[str, str]]:
 
 
 def derive_company_industry(company_name: str) -> str:
-    """Derive industry from company name. NEVER returns None or "?"."""
+    """Derive industry from company name."""
     if not company_name or not isinstance(company_name, str):
         return "Unknown"
     
@@ -98,60 +98,38 @@ def derive_company_industry(company_name: str) -> str:
     
     name_lower = company_name.lower().strip()
     
-    # Exact company mapping
     company_map = {
-        # Insurance
         'american family insurance': 'Insurance',
         'state farm': 'Insurance',
         'allstate': 'Insurance',
         'geico': 'Insurance',
         'progressive': 'Insurance',
-        
-        # Retail
         'best buy': 'Retail/E-commerce',
         'walmart': 'Retail/E-commerce',
         'target': 'Retail/E-commerce',
         'yeti': 'Retail/E-commerce',
         'yeti coolers': 'Retail/E-commerce',
         'direct supply': 'Retail/Healthcare Supplies',
-        
-        # Banking/Financial
         't. rowe price': 'Banking/Financial Services',
         't rowe price': 'Banking/Financial Services',
         'deutsche bank': 'Banking/Financial Services',
         'jpmorgan': 'Banking/Financial Services',
         'bank of america': 'Banking/Financial Services',
         'huntington bank': 'Banking/Financial Services',
-        
-        # Healthcare
         'k health': 'Healthcare',
         'kaiser': 'Healthcare',
         'anthem': 'Healthcare',
-        
-        # Technology/Cybersecurity
         'zscaler': 'Technology/Cybersecurity',
         'smart solutions': 'Technology/Software',
-        
-        # Automotive
         'ford': 'Automotive/Manufacturing',
         'ford motor company': 'Automotive/Manufacturing',
         'michelin': 'Automotive/Manufacturing',
-        
-        # Media
         'sony': 'Media/Entertainment',
         'sony interactive': 'Media/Entertainment',
-        
-        # Non-Profit
         'ypo': 'Non-Profit/NGO',
         'neighborhood reinvestment': 'Non-Profit/NGO',
-        
-        # Government
         'city of toronto': 'Government/Public Sector',
-        
-        # Real Estate
         'lead homes': 'Real Estate',
-        
-        # Recruiting/HR
         'qc careers': 'Technology/Recruiting',
     }
     
@@ -160,7 +138,6 @@ def derive_company_industry(company_name: str) -> str:
             logger.info("industry_derived_exact", company=company_name, industry=industry)
             return industry
     
-    # Keyword matching
     keyword_map = {
         'insurance': 'Insurance',
         'bank': 'Banking/Financial Services',
@@ -189,7 +166,7 @@ def derive_company_industry(company_name: str) -> str:
 
 
 def is_vendor_name(company_name: str) -> bool:
-    """Vendor detection using imported KNOWN_VENDOR_NAMES."""
+    """Vendor detection."""
     if not company_name or not isinstance(company_name, str):
         return False
     
@@ -253,7 +230,7 @@ def normalize_company_name(name: str) -> str:
 
 
 def normalize_product(product: str) -> str | None:
-    """Normalize product using imported PRODUCT_ALIASES."""
+    """Normalize product."""
     if not product or not isinstance(product, str):
         return None
     
@@ -266,7 +243,6 @@ def normalize_product(product: str) -> str | None:
             logger.info("product_normalized", original=product, canonical=canonical)
             return canonical
     
-    # Exclude tools
     tool_keywords = [
         'copado', 'flosum', 'gearset', 'mulesoft', 'hubspot', 'docusign',
         'qualtrics', 'zoominfo', 'outreach', 'informatica', 'workato'
@@ -339,7 +315,7 @@ def reclassify_vendors_to_correct_field(data: dict) -> dict:
 
 
 def populate_company_industries(data: dict) -> dict:
-    """FORCE populate company_industry for ALL experiences and projects."""
+    """FORCE populate company_industry."""
     for exp in data.get("experiences", []):
         company = exp.get("company_name")
         if company:
@@ -362,7 +338,7 @@ def populate_company_industries(data: dict) -> dict:
 
 
 def backfill_project_via_vendor(data: dict) -> dict:
-    """Backfill via_vendor for client projects."""
+    """Backfill via_vendor."""
     for exp in data.get("experiences", []):
         vendor = exp.get("vendor_consulting_firm")
         if vendor:
@@ -373,9 +349,8 @@ def backfill_project_via_vendor(data: dict) -> dict:
 
 
 def classify_and_filter(data: dict) -> dict:
-    """Classify and filter products and projects."""
+    """Classify and filter products."""
     for exp in data.get("experiences", []):
-        # Filter products
         original_products = exp.get("products", [])
         filtered_products = []
         for p in original_products:
@@ -384,7 +359,6 @@ def classify_and_filter(data: dict) -> dict:
                 filtered_products.append(canonical)
         exp["products"] = filtered_products
         
-        # Filter client projects
         valid_projects = []
         for project in exp.get("client_projects", []):
             client_name = project.get("project_end_client_name", "")
@@ -400,7 +374,6 @@ def classify_and_filter(data: dict) -> dict:
             
             project["project_end_client_name"] = normalize_company_name(client_name)
             
-            # Filter project products
             project_products = []
             for p in project.get("products", []):
                 canonical = normalize_product(p)
@@ -620,14 +593,54 @@ def split_certifications_and_awards(certifications: List[str]) -> tuple:
     return sfdc_certs, non_sfdc_certs, awards
 
 
+def aggregate_all_skills(data: dict) -> dict:
+    """
+    NEW: Aggregate all skills across experiences into all_skills_summary.
+    This creates the general skills section for the API.
+    """
+    all_skills = {
+        "admin_and_automation": set(),
+        "dev_coding": set(),
+        "architecture_design": set(),
+        "data_management": set(),
+        "deployment_devops": set(),
+        "integration": set(),
+        "data_reporting": set(),
+        "ecosystem_tools": set(),
+        "security_compliance": set(),
+        "delivery_methodology": set(),
+        "business_analysis": set(),
+        "project_program_management": set(),
+        "qa_testing": set(),
+        "marketing_automation": set()
+    }
+    
+    for exp in data.get("experiences", []):
+        exp_skills = exp.get("skills", {})
+        for category, skills_list in exp_skills.items():
+            if category in all_skills and isinstance(skills_list, list):
+                all_skills[category].update(skills_list)
+    
+    # Convert sets to sorted lists
+    data["all_skills_summary"] = {
+        category: sorted(list(skills))
+        for category, skills in all_skills.items()
+    }
+    
+    total_skills = sum(len(v) for v in data["all_skills_summary"].values())
+    logger.info("skills_aggregated", total_unique_skills=total_skills)
+    
+    return data
+
+
 def apply_normalization_rules(data: Dict) -> Dict:
-    """Apply all normalization rules. CRITICAL: Timezone extraction ENABLED."""
+    """Apply all normalization rules including skills aggregation."""
     
     # Sanitize location
     if data.get("candidate_location"):
         data["candidate_location"] = sanitize_location(data["candidate_location"])
     
-    # CRITICAL: Extract timezone from location
+    # Extract timezone
     if data.get("candidate_location"):
         timezone_info = extract_timezone_from_location(data["candidate_location"])
         if timezone_info:
@@ -670,5 +683,8 @@ def apply_normalization_rules(data: Dict) -> Dict:
     data = compute_industry_experience(data)
     data = compute_product_experience(data)
     data = compute_companies_summary(data)
+    
+    # NEW: Aggregate all skills for general skills section
+    data = aggregate_all_skills(data)
     
     return data
