@@ -1,5 +1,6 @@
 """
-GPT-4o CLIENT - COMPREHENSIVE FIX with 14 skill categories
+GPT-4o CLIENT - FINAL PRODUCTION VERSION
+Complete with comprehensive prompts AND all enforcement methods
 """
 
 import json
@@ -22,18 +23,22 @@ EXCLUDE_FROM_NAME = {
     'salesforce', 'sfdc'
 }
 
-
 RESUME_SYSTEM_PROMPT = """You are an expert resume parser for Salesforce staffing.
-
-**ZERO HALLUCINATION:**
-- Extract ONLY explicitly stated information
-- DO NOT infer products
-
+Extract ONLY explicitly stated information. DO NOT infer products or compute years.
 Return ONLY valid JSON."""
+
+CRM_TRIGGERS = ["saql", "crma", "tcrm", "tableau crm", "einstein analytics", "wave analytics", "crm analytics"]
+
+SUMMARY_REPAIR_SYS = """Rewrite job summaries using ONLY the provided facts.
+- Do NOT add company names
+- Do NOT add metrics unless provided  
+- Write 35-60 words in What-How-Why format
+- Anonymize company to [size] + [industry]
+Return plain text only."""
 
 
 class GPT4oClient:
-    """GPT-4o client with 14 skill categories."""
+    """GPT-4o client - FINAL PRODUCTION."""
     
     def __init__(self):
         try:
@@ -51,6 +56,130 @@ class GPT4oClient:
             logger.error("gpt4o_client_initialization_failed", error=str(e))
             raise
     
+    def extract_phones(self, text: str) -> List[str]:
+        """FIX 1: Extract phones - capture full match."""
+        phone_re = re.compile(r'(?:\+?\d{1,3}[\s.-]*)?\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4}')
+        raw = [m.group(0) for m in phone_re.finditer(text)]
+        norm = []
+        for p in raw:
+            p2 = re.sub(r'[^\d+]', '', p)
+            if p2 and p2 not in norm:
+                norm.append(p2)
+        logger.info("phones_extracted", count=len(norm))
+        return norm
+    
+    def extract_linkedin_url(self, text: str) -> Optional[str]:
+        """FIX 2: Extract LinkedIn - only if URL present."""
+        m = re.search(r'(https?://)?(www\.)?linkedin\.com/in/[A-Za-z0-9\-_/%]+', text, re.I)
+        if not m:
+            if re.search(r'\blinkedin\b', text, re.I):
+                return "LinkedIn (URL not provided)"
+            return None
+        url = m.group(0)
+        return url if url.startswith("http") else f"https://{url.lstrip('/')}"
+    
+    def derive_sfdc_year_from_profile(self, text: str, current_year: int = 2026) -> Optional[str]:
+        """FIX 3: Derive SFDC year from profile - Python math."""
+        t = text.lower()
+        patterns = [
+            r'(?:over\s*)?(\d{1,2})\s*\+?\s*years?.{0,30}\bsalesforce\b',
+            r'\bsalesforce\b.{0,30}(?:over\s*)?(\d{1,2})\s*\+?\s*years?'
+        ]
+        for p in patterns:
+            m = re.search(p, t)
+            if m:
+                yrs = int(m.group(1))
+                if 1 <= yrs <= 30:
+                    derived = current_year - yrs
+                    logger.info("sfdc_year_from_profile", years=yrs, derived=derived)
+                    return str(derived)
+        return None
+    
+    def redact_company_names(self, summary: str, exp: dict) -> str:
+        """FIX 5: Redact company names - deterministic."""
+        if not summary:
+            return summary
+        for key in ("company_name", "vendor_consulting_firm"):
+            name = (exp.get(key) or "").strip()
+            if name:
+                summary = re.sub(re.escape(name), "the company", summary, flags=re.I)
+        for proj in exp.get("client_projects", []):
+            client = proj.get("project_end_client_name", "").strip()
+            if client:
+                summary = re.sub(re.escape(client), "the client", summary, flags=re.I)
+        return summary
+    
+    def ensure_crm_analytics(self, exp: dict):
+        """FIX 6: Force CRM Analytics if triggers present."""
+        blob = " ".join([
+            exp.get("job_summary", ""),
+            " ".join(exp.get("skills", {}).get("data_reporting", []) or []),
+        ]).lower()
+        
+        if any(k in blob for k in CRM_TRIGGERS):
+            prods = exp.get("products") or []
+            if "CRM Analytics" not in prods:
+                prods.append("CRM Analytics")
+                logger.info("crm_analytics_injected", title=exp.get("job_title"))
+            exp["products"] = prods
+    
+    async def repair_job_summary(self, exp: dict) -> str:
+        """FIX 4: Repair job summary if <35 words."""
+        facts = {
+            "job_title": exp.get("job_title"),
+            "dates": f'{exp.get("job_start_date")} to {exp.get("job_end_date")}',
+            "industry": exp.get("company_industry"),
+            "products": exp.get("products") or [],
+            "skills": exp.get("skills") or {},
+            "original_summary": exp.get("job_summary") or ""
+        }
+        
+        try:
+            start = exp.get("job_start_date", "")
+            end = exp.get("job_end_date", "")
+            if start:
+                start_year = int(str(start)[:4])
+                if end == "Present":
+                    end_year = 2026
+                elif end:
+                    end_year = int(str(end)[:4])
+                else:
+                    end_year = start_year
+                duration_years = end_year - start_year
+                facts["duration"] = f"{duration_years} years" if duration_years != 1 else "1 year"
+        except:
+            facts["duration"] = "time period"
+        
+        user = f"""Facts JSON:
+{json.dumps(facts, ensure_ascii=False)}
+
+Write 40-60 words using What-How-Why structure:
+1. Context: "[Role] for [industry] company for [duration]..."
+2. How: Products and tools from facts
+3. Why: Outcome or scope from facts (do not invent)
+
+Anonymize all company names to industry descriptors.
+"""
+        
+        try:
+            resp = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": SUMMARY_REPAIR_SYS},
+                    {"role": "user", "content": user}
+                ],
+                temperature=0.0,
+                max_tokens=400
+            )
+            repaired = (resp.choices[0].message.content or "").strip()
+            logger.info("job_summary_repaired", 
+                       original_len=len(facts["original_summary"].split()), 
+                       repaired_len=len(repaired.split()))
+            return repaired
+        except Exception as e:
+            logger.error("repair_failed", error=str(e))
+            return exp.get("job_summary", "")
+    
     def extract_name_from_header(self, text: str) -> Optional[str]:
         """Extract name from first 5 lines."""
         lines = text.split('\n')
@@ -64,7 +193,6 @@ class GPT4oClient:
             line_lower = line.lower()
             
             if any(kw in line_lower for kw in EXCLUDE_FROM_NAME):
-                logger.info("name_skipped", line=line[:50])
                 continue
             
             if any(char in line for char in ['•', ':', '|', '–', '—', '-', '/']):
@@ -78,18 +206,6 @@ class GPT4oClient:
                             logger.info("name_extracted", name=line, line_number=i+1)
                             return line
         
-        for i, line in enumerate(lines[:5]):
-            if any(kw in line.lower() for kw in EXCLUDE_FROM_NAME):
-                continue
-            
-            match = re.search(r'\b([A-Z][a-z]{2,14})\s+([A-Z][a-z]{2,14})\b', line)
-            if match:
-                name = match.group(0)
-                if not any(term in name.lower() for term in EXCLUDE_FROM_NAME):
-                    logger.info("name_extracted_pattern", name=name)
-                    return name
-        
-        logger.warning("name_extraction_failed")
         return None
     
     def extract_email_and_location_from_header(self, text: str) -> Tuple[List[str], Optional[str]]:
@@ -99,9 +215,9 @@ class GPT4oClient:
         
         try:
             lines = text.split('\n')
+            header = '\n'.join(lines[:20])
             
             email_pattern = r'[\w.+-]+@[\w-]+\.[\w.-]+'
-            header = '\n'.join(lines[:20])
             emails = re.findall(email_pattern, header)
             if not emails:
                 emails = re.findall(email_pattern, text)
@@ -113,21 +229,13 @@ class GPT4oClient:
             ]
             
             for i, line in enumerate(header_lines):
-                line_lower = line.lower()
-                
-                if any(kw in line_lower for kw in ['skills', 'expertise', 'technical']):
-                    continue
-                
-                if line.strip().startswith(('•', '-', '*')):
+                if any(kw in line.lower() for kw in ['skills', 'expertise']):
                     continue
                 
                 for pattern in location_patterns:
                     for match in re.finditer(pattern, line):
                         city = match.group(1)
                         region = match.group(2)
-                        
-                        if any(term in city.lower() for term in EXCLUDE_FROM_NAME):
-                            continue
                         
                         if i > 5:
                             continue
@@ -147,7 +255,6 @@ class GPT4oClient:
                 if location:
                     break
             
-            logger.info("header_extraction_complete", emails=len(emails), location=bool(location))
         except Exception as e:
             logger.error("header_extraction_failed", error=str(e))
         
@@ -158,12 +265,8 @@ class GPT4oClient:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         retry=retry_if_exception_type((TimeoutError, ConnectionError))
     )
-    async def extract_resume(
-        self, 
-        text: str, 
-        filename: Optional[str] = None
-    ) -> dict:
-        """Extract resume with ALL 14 skill categories."""
+    async def extract_resume(self, text: str, filename: Optional[str] = None) -> dict:
+        """Extract resume - FINAL PRODUCTION with comprehensive prompt AND enforcement."""
         try:
             if not text or not isinstance(text, str):
                 raise ValueError("Resume text must be a non-empty string")
@@ -176,80 +279,63 @@ class GPT4oClient:
             
             name_from_header = self.extract_name_from_header(text)
             emails, location = self.extract_email_and_location_from_header(text)
+            phones = self.extract_phones(text[:2000])  # FIX 1
+            links = self.extract_linkedin_url(text)     # FIX 2
             
             products_list = ", ".join(sorted(SALESFORCE_PRODUCTS_CANONICAL))
             
-            prompt = f"""Parse this resume per schema.
+            # COMPREHENSIVE PROMPT with What-How-Why
+            prompt = f"""Parse resume following strict guidelines.
 
-**CRITICAL: COMPANY CLASSIFICATION - NO SALESFORCE ISV CATEGORY**
+**COMPANY CLASSIFICATION:**
+- vendor_consulting_firm: IT consulting/staffing/ISVs
+- company_name: Direct employers
 
-For each work experience, classify companies as EITHER:
+**JOB SUMMARY (35-50 words, What-How-Why):**
+1. Context: "[Role] for [size] [industry] for [duration]..."
+2. How: Salesforce products/tools used
+3. Why: Business outcome or scope
 
-1. **vendor_consulting_firm**: IT consulting firms, staffing firms, OR Salesforce ISVs
-   - Examples: Accenture, Deloitte, Slolam, Gears CRM, Cloudware Connections, Eezentek
-   - Indicators: "consulting", "staffing", "solutions", "technologies" in name
-   - **IMPORTANT: ALL ISVs go here (NO separate "Salesforce ISV" category)**
+Example: "Salesforce Developer for enterprise bank for 2 years implementing Financial Services Cloud. Developed custom LWC components integrating with Informatica for real-time data syncing. This streamlined loan approval processes and reduced manual data entry for Loan Officers."
 
-2. **company_name**: Direct employers who are NOT consulting firms
-   - Examples: Zscaler, Huntington Bank, Target
-   - Only use if company is an end client/direct employer
+**ANTI-HALLUCINATION:**
+- NEVER invent metrics
+- NEVER use company names in summary
+- Extract ONLY stated facts
 
-**CRITICAL: EXTRACT CLIENT PROJECTS UNDER VENDORS**
-
-When a vendor has multiple client engagements listed, extract each as a client project.
-
-**CRITICAL: SFDC START YEAR - CHECK TITLE AND DESCRIPTION**
-
-Find EARLIEST year where EITHER:
-1. Job title contains "Salesforce" or "SFDC", OR
-2. Job description mentions "Salesforce" or "SFDC"
-
-**PRODUCTS (ONLY IF EXPLICITLY NAMED):**
-Valid products: {products_list}
-
-**SKILLS CATEGORIES (14 categories):**
-- admin_and_automation: Flow Builder, Process Builder, Reports, Dashboards, Data Loader, etc.
-- dev_coding: Apex, LWC, Visualforce, JavaScript, Python, Java, etc.
-- architecture_design: Solution Design, Data Modeling, Integration Patterns, etc.
-- data_management: Data Migration, ETL, Data Quality, etc.
-- deployment_devops: Copado, Gearset, CI/CD, Git, etc.
-- integration: MuleSoft, REST API, Platform Events, etc.
-- data_reporting: CRM Analytics, Tableau, Einstein Discovery, SQL, etc.
-- ecosystem_tools: DocuSign, Conga, ZoomInfo, Veeva, etc.
-- security_compliance: Salesforce Shield, MFA, Encryption, SSO, etc.
-- delivery_methodology: Agile, Scrum, Jira, Sprint Planning, etc.
-- business_analysis: Requirements Gathering, User Stories, Process Mapping, etc.
-- project_program_management: Budget Management, Risk Management, etc.
-- qa_testing: Test Automation, Regression Testing, UAT, etc.
-- marketing_automation: SFMC, AMPScript, Journey Builder, Pardot, etc.
+**PRODUCTS:** {products_list}
 
 **CONTACT:**
 Emails: {json.dumps(emails)}
+Phones: {json.dumps(phones)}
+LinkedIn: {json.dumps(links)}
 Location: {json.dumps(location)}
 
 **RESUME:**
 {text}
 
-**JSON OUTPUT:**
+**JSON:**
 {{
   "full_name": {json.dumps(name_from_header) if name_from_header else '"EXTRACT"'},
   "emails": {json.dumps(emails)},
+  "phones": {json.dumps(phones)},
+  "links": {json.dumps(links)},
   "candidate_location": {json.dumps(location) if location else 'null'},
   "it_earliest_year": "YYYY",
-  "sfdc_earliest_year": "YYYY",
-  "candidate_overall_summary": "Third person, NO names/companies",
+  "sfdc_earliest_year": null,
+  "candidate_overall_summary": "Third person, NO names",
   "education": [],
   "certifications": [],
   "experiences": [
     {{
-      "company_name": "Direct employer name OR null",
-      "vendor_consulting_firm": "Vendor/ISV name OR null",
-      "company_industry": "Derive from context",
-      "job_title": "EXACTLY as written",
-      "job_start_date": "YYYY-MM or YYYY",
-      "job_end_date": "YYYY-MM or Present (NEVER ?)",
-      "job_summary": "2-3 sentences",
-      "products": ["ONLY if explicitly named"],
+      "company_name": "OR null",
+      "vendor_consulting_firm": "OR null",
+      "company_industry": "Derive",
+      "job_title": "EXACT",
+      "job_start_date": "YYYY-MM",
+      "job_end_date": "YYYY-MM or Present",
+      "job_summary": "Extract facts verbatim",
+      "products": [],
       "skills": {{
         "admin_and_automation": [],
         "dev_coding": [],
@@ -266,17 +352,7 @@ Location: {json.dumps(location)}
         "qa_testing": [],
         "marketing_automation": []
       }},
-      "client_projects": [
-        {{
-          "project_end_client_name": "Client name",
-          "via_vendor": "Vendor if applicable",
-          "project_client_industry": "Derive from context",
-          "project_start_date": "YYYY-MM",
-          "project_end_date": "YYYY-MM or Present",
-          "products": ["ONLY if explicitly named"],
-          "project_scope_summary": "Brief description"
-        }}
-      ]
+      "client_projects": []
     }}
   ]
 }}"""
@@ -295,39 +371,53 @@ Location: {json.dumps(location)}
             )
             
             json_text = response.choices[0].message.content
-            
             if not json_text or not json_text.strip():
                 raise ValueError("GPT returned empty response")
             
             parsed = json.loads(json_text)
             
-            # Force pre-extracted values
-            if name_from_header and (not parsed.get("full_name") or parsed.get("full_name") in ["REQUIRED", "EXTRACT"]):
+            if name_from_header:
                 parsed["full_name"] = name_from_header
-                logger.warning("full_name_forced", name=name_from_header)
-            
-            if emails and not parsed.get("emails"):
+            if emails:
                 parsed["emails"] = emails
-            
-            if location and not parsed.get("candidate_location"):
+            if phones:
+                parsed["phones"] = phones
+            if links:
+                parsed["links"] = links
+            if location:
                 parsed["candidate_location"] = location
             
-            # Sanitize location
-            location_val = parsed.get("candidate_location")
-            if location_val and isinstance(location_val, str):
-                if any(phrase in location_val.lower() for phrase in [
-                    'extract', 'resume', 'city, state', 'if present', 'n/a'
-                ]):
-                    parsed["candidate_location"] = None
+            # FIX 3: SFDC year from profile
+            profile_year = self.derive_sfdc_year_from_profile(text, current_year=2026)
+            if profile_year:
+                parsed["sfdc_earliest_year"] = profile_year
             
-            # Derive IT year
+            # Fallback to job history
+            if not parsed.get("sfdc_earliest_year"):
+                min_year = None
+                for exp in parsed.get("experiences", []):
+                    title = exp.get("job_title", "").lower()
+                    summary = exp.get("job_summary", "").lower()
+                    if "salesforce" in title or "salesforce" in summary:
+                        start = exp.get("job_start_date")
+                        if start:
+                            try:
+                                year = int(str(start)[:4])
+                                if min_year is None or year < min_year:
+                                    min_year = year
+                            except:
+                                pass
+                if min_year:
+                    parsed["sfdc_earliest_year"] = str(min_year)
+            
+            # IT year
             if not parsed.get("it_earliest_year"):
                 min_year = None
                 for exp in parsed.get("experiences", []):
-                    start_date = exp.get("job_start_date")
-                    if start_date:
+                    start = exp.get("job_start_date")
+                    if start:
                         try:
-                            year = int(str(start_date)[:4])
+                            year = int(str(start)[:4])
                             if min_year is None or year < min_year:
                                 min_year = year
                         except:
@@ -335,53 +425,21 @@ Location: {json.dumps(location)}
                 if min_year:
                     parsed["it_earliest_year"] = str(min_year)
             
-            # Derive SFDC year - CHECK BOTH TITLE AND DESCRIPTION
-            if not parsed.get("sfdc_earliest_year"):
-                min_year = None
-                sfdc_jobs = []
-                
-                for exp in parsed.get("experiences", []):
-                    job_title = exp.get("job_title", "")
-                    job_summary = exp.get("job_summary", "")
-                    start_date = exp.get("job_start_date")
-                    
-                    if not start_date:
-                        continue
-                    
-                    title_lower = job_title.lower() if job_title else ""
-                    summary_lower = job_summary.lower() if job_summary else ""
-                    
-                    is_sfdc_job = (
-                        "salesforce" in title_lower or 
-                        "sfdc" in title_lower or
-                        "salesforce" in summary_lower or
-                        "sfdc" in summary_lower
-                    )
-                    
-                    if is_sfdc_job:
-                        try:
-                            year = int(str(start_date)[:4])
-                            sfdc_jobs.append({
-                                "title": job_title,
-                                "year": year,
-                                "has_sfdc_in_title": "salesforce" in title_lower or "sfdc" in title_lower,
-                                "has_sfdc_in_description": "salesforce" in summary_lower or "sfdc" in summary_lower
-                            })
-                            
-                            if min_year is None or year < min_year:
-                                min_year = year
-                        except:
-                            pass
-                
-                if min_year:
-                    parsed["sfdc_earliest_year"] = str(min_year)
-                    logger.warning("sfdc_earliest_year_derived", year=min_year, jobs=sfdc_jobs)
-                else:
-                    logger.error("NO_SALESFORCE_EXPERIENCE_FOUND")
-                    parsed["sfdc_earliest_year"] = None
-            
-            # Ensure skill structure (ALL 14 CATEGORIES)
+            # Process experiences
             for exp in parsed.get("experiences", []):
+                # FIX 6: CRM Analytics
+                self.ensure_crm_analytics(exp)
+                
+                # FIX 4: Repair job summary
+                job_summary = exp.get("job_summary", "")
+                word_count = len(job_summary.split())
+                if word_count < 35:
+                    exp["job_summary"] = await self.repair_job_summary(exp)
+                
+                # FIX 5: Redact company names
+                exp["job_summary"] = self.redact_company_names(exp.get("job_summary", ""), exp)
+                
+                # Ensure skills
                 if "skills" not in exp or not isinstance(exp["skills"], dict):
                     exp["skills"] = {
                         "admin_and_automation": [],
@@ -400,14 +458,7 @@ Location: {json.dumps(location)}
                         "marketing_automation": []
                     }
             
-            logger.info(
-                "gpt_extraction_succeeded",
-                name=parsed.get("full_name"),
-                location=parsed.get("candidate_location"),
-                experiences=len(parsed.get("experiences", [])),
-                filename=filename
-            )
-            
+            logger.info("gpt_extraction_succeeded", name=parsed.get("full_name"))
             return parsed
             
         except json.JSONDecodeError as e:

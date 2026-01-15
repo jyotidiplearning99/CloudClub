@@ -176,6 +176,13 @@ PRODUCT_ALIASES = {
     "einstein analytics": "CRM Analytics",
     "wave": "CRM Analytics",
     "wave analytics": "CRM Analytics",
+    "tcrm": "CRM Analytics",
+    "crma": "CRM Analytics",
+    "crm analytics": "CRM Analytics",
+    "tableau crm": "CRM Analytics",
+    "einstein analytics": "CRM Analytics",
+    "wave": "CRM Analytics",
+    "wave analytics": "CRM Analytics",
     
     # Tableau
     "tableau bi": "Tableau",
@@ -410,7 +417,7 @@ SKILLS_CATEGORIES = {
     },
     
     "marketing_automation": {
-        "name": "Marketing Automation",
+        "name": "Marketing Automation ",
         "skills": [
             "Marketing Cloud", "Marketing Cloud Engagement", "SFMC",
             "AMPScript", "SSJS", "Server-Side JavaScript",

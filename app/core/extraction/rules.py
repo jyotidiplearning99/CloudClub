@@ -1,5 +1,6 @@
 """
 POST-PARSE rules with skills aggregation for general skills summary.
+18/12/2025
 """
 
 from typing import Dict, List, Optional
@@ -44,6 +45,10 @@ INTERNATIONAL_TIMEZONES = {
     'mumbai': 'Asia/Kolkata', 'india': 'Asia/Kolkata',
     'bangalore': 'Asia/Kolkata', 'bengaluru': 'Asia/Kolkata',
     'sydney': 'Australia/Sydney', 'australia': 'Australia/Sydney',
+    # Canada
+    'ontario': 'America/Toronto', 'on': 'America/Toronto',
+    'ottawa': 'America/Toronto',
+    'toronto': 'America/Toronto',
 }
 
 
@@ -398,6 +403,14 @@ def compute_companies_summary(data: dict) -> dict:
             vendor_name = normalize_company_name(exp["vendor_consulting_firm"])
             vendors.add(vendor_name)
         
+        if exp.get("company_is_sfdc_client") == "TRUE" and exp.get("company_name"):
+            if exp.get("products"):  # Only if products exist
+                clients.add(exp["company_name"])
+        
+        for cp in exp.get("client_projects", []):
+            if cp.get("products"):  # Only if products exist
+                clients.add(cp["project_end_client_name"])
+
         if exp.get("company_name"):
             company_name = normalize_company_name(exp["company_name"])
             if is_vendor_name(company_name):
