@@ -12,13 +12,14 @@ KNOWN_VENDOR_NAMES = {
     "accenture", "deloitte", "capgemini", "cognizant", "infosys", "wipro", 
     "tcs", "tata consultancy", "hcl", "tech mahindra",
     "ntt data", "ewave", "dvlpr", "osf digital", "osf global", "cloudnerd", 
-    "genisis", "relevantz", "guerratech","slolam", "gears crm", 
-    "cloudware connections", "eezentek", 
+    "genisis", "relevantz", "guerratech", "slolam", "gears crm", 
+    "cloudware connections", "eezentek",
+    "gp strategies", "g.p. strategies", "gp",  # ✅ ADDED
     "teksystems", "tek systems", "v-soft", "vsoft", "v-soft consulting",
     "zensar", "zensar technologies", "quinnox", "fortech",
     "kcsit", "machinas", "soitron", "wunderman", "globant",
-    "sysmap", "consulting", "consultancy", "staffing", "solutions inc",
-    "zscaler"
+    "sysmap", "consulting", "consultancy", "staffing", "solutions inc"
+    # ✅ REMOVED "zscaler" - it's an end client, not a consulting vendor
 }
 
 VENDOR_INDICATORS = [
@@ -170,19 +171,15 @@ PRODUCT_ALIASES = {
     "hc": "Health Cloud",
     "health cloud": "Health Cloud",
     
-    # CRM Analytics
+    # CRM Analytics - ✅ CRITICAL: Added all aliases
     "crma": "CRM Analytics",
-    "tableau crm": "CRM Analytics",
-    "einstein analytics": "CRM Analytics",
-    "wave": "CRM Analytics",
-    "wave analytics": "CRM Analytics",
     "tcrm": "CRM Analytics",
-    "crma": "CRM Analytics",
     "crm analytics": "CRM Analytics",
     "tableau crm": "CRM Analytics",
     "einstein analytics": "CRM Analytics",
     "wave": "CRM Analytics",
     "wave analytics": "CRM Analytics",
+    "saql": "CRM Analytics",  # ✅ ADDED: If SAQL mentioned, it's CRM Analytics
     
     # Tableau
     "tableau bi": "Tableau",

@@ -95,6 +95,68 @@ class GPT4oClient:
                     return str(derived)
         return None
     
+    def derive_industry_from_name(self, name: str) -> str:
+        """Quick industry derivation from company name."""
+        if not name or not isinstance(name, str):
+            return "Unknown"
+        
+        name_lower = name.lower()
+        
+        industry_keywords = {
+            'hotel': 'Hospitality',
+            'seasons': 'Hospitality',
+            'bank': 'Banking/Financial Services',
+            'financial': 'Banking/Financial Services',
+            'insurance': 'Insurance',
+            'fleet': 'Fleet Management',
+            'university': 'Education',
+            'college': 'Education',
+            'telus': 'Telecommunications',
+            'rogers': 'Telecommunications',
+        }
+        
+        for keyword, industry in industry_keywords.items():
+            if keyword in name_lower:
+                return industry
+        
+        return "Unknown"
+    
+    def extract_clients_from_text(self, text: str, vendor: str) -> List[dict]:
+        """Extract client companies from project descriptions using regex."""
+        clients = []
+        
+        # Patterns to match "project for [Company Name]"
+        patterns = [
+            r'project for ([A-Z][A-Za-z\s&\.\-]+(?:Hotels?|Bank|Insurance|Corporation|Inc|LLC|Ltd|Management|University|Communications|Financial|Fleet|Investments?))',
+            r'working (?:with|for) ([A-Z][A-Za-z\s&\.\-]+(?:Hotels?|Bank|Insurance|Corporation|Inc|LLC|Ltd))',
+            r'([A-Z][A-Za-z\s&\.\-]+(?:Hotels?|Bank|University)) (?:implementation|project)',
+            r'(?:client|engagement):\s*([A-Z][A-Za-z\s&\.\-]+)',
+        ]
+        
+        for pattern in patterns:
+            matches = re.finditer(pattern, text, re.IGNORECASE)
+            for match in matches:
+                client_name = match.group(1).strip()
+                
+                # Skip if it's a vendor name
+                vendor_keywords = ['slalom', 'deloitte', 'accenture', 'cognizant', 'consulting']
+                if any(kw in client_name.lower() for kw in vendor_keywords):
+                    continue
+                
+                # Clean up the name
+                client_name = re.sub(r'\s+', ' ', client_name).strip()
+                
+                clients.append({
+                    "project_end_client_name": client_name,
+                    "project_client_industry": self.derive_industry_from_name(client_name),
+                    "via_vendor": vendor,
+                    "products": []
+                })
+                logger.info("client_extracted_via_regex", client=client_name, vendor=vendor)
+                break  # Only take first match per pattern
+        
+        return clients
+    
     def redact_company_names(self, summary: str, exp: dict) -> str:
         """FIX 5: Redact company names - deterministic."""
         if not summary:
@@ -279,8 +341,8 @@ Anonymize all company names to industry descriptors.
             
             name_from_header = self.extract_name_from_header(text)
             emails, location = self.extract_email_and_location_from_header(text)
-            phones = self.extract_phones(text[:2000])  # FIX 1
-            links = self.extract_linkedin_url(text)     # FIX 2
+            phones = self.extract_phones(text[:2000])
+            links = self.extract_linkedin_url(text)
             
             products_list = ", ".join(sorted(SALESFORCE_PRODUCTS_CANONICAL))
             
@@ -291,17 +353,29 @@ Anonymize all company names to industry descriptors.
 - vendor_consulting_firm: IT consulting/staffing/ISVs
 - company_name: Direct employers
 
+**CLIENT PROJECT EXTRACTION:**
+When job description mentions work FOR another company via a vendor, extract into client_projects.
+
+Trigger phrases:
+- "project for [Company Name]"
+- "working with [Company Name]"
+- "[Company Name] implementation"
+- "client: [Company Name]"
+
+Extract client company name exactly as written into client_projects array.
+
 **JOB SUMMARY (35-50 words, What-How-Why):**
 1. Context: "[Role] for [size] [industry] for [duration]..."
 2. How: Salesforce products/tools used
 3. Why: Business outcome or scope
 
-Example: "Salesforce Developer for enterprise bank for 2 years implementing Financial Services Cloud. Developed custom LWC components integrating with Informatica for real-time data syncing. This streamlined loan approval processes and reduced manual data entry for Loan Officers."
+In job_summary: anonymize company names
+In client_projects: use exact company names
 
 **ANTI-HALLUCINATION:**
 - NEVER invent metrics
-- NEVER use company names in summary
 - Extract ONLY stated facts
+- Client names in client_projects must be exact
 
 **PRODUCTS:** {products_list}
 
@@ -334,7 +408,7 @@ Location: {json.dumps(location)}
       "job_title": "EXACT",
       "job_start_date": "YYYY-MM",
       "job_end_date": "YYYY-MM or Present",
-      "job_summary": "Extract facts verbatim",
+      "job_summary": "Anonymized",
       "products": [],
       "skills": {{
         "admin_and_automation": [],
@@ -352,7 +426,14 @@ Location: {json.dumps(location)}
         "qa_testing": [],
         "marketing_automation": []
       }},
-      "client_projects": []
+      "client_projects": [
+        {{
+          "project_end_client_name": "Exact name",
+          "project_client_industry": "Derive",
+          "via_vendor": "vendor_consulting_firm value",
+          "products": []
+        }}
+      ]
     }}
   ]
 }}"""
@@ -429,6 +510,25 @@ Location: {json.dumps(location)}
             for exp in parsed.get("experiences", []):
                 # FIX 6: CRM Analytics
                 self.ensure_crm_analytics(exp)
+                
+                # PYTHON FALLBACK: Extract clients if GPT missed them
+                vendor = exp.get("vendor_consulting_firm")
+                if vendor and (not exp.get("client_projects") or len(exp.get("client_projects", [])) == 0):
+                    job_title = exp.get("job_title", "")
+                    
+                    if job_title:
+                        # Find position of this job in original text
+                        title_pos = text.lower().find(job_title.lower())
+                        if title_pos > -1:
+                            # Extract 500 chars as context
+                            context = text[title_pos:title_pos+500]
+                            extracted_clients = self.extract_clients_from_text(context, vendor)
+                            
+                            if extracted_clients:
+                                exp["client_projects"] = extracted_clients
+                                logger.info("clients_added_via_fallback", 
+                                          vendor=vendor, 
+                                          clients=[c["project_end_client_name"] for c in extracted_clients])
                 
                 # FIX 4: Repair job summary
                 job_summary = exp.get("job_summary", "")

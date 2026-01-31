@@ -1,6 +1,6 @@
 """
 POST-PARSE rules with skills aggregation for general skills summary.
-18/12/2025
+29/01/2026
 """
 
 from typing import Dict, List, Optional
@@ -45,10 +45,6 @@ INTERNATIONAL_TIMEZONES = {
     'mumbai': 'Asia/Kolkata', 'india': 'Asia/Kolkata',
     'bangalore': 'Asia/Kolkata', 'bengaluru': 'Asia/Kolkata',
     'sydney': 'Australia/Sydney', 'australia': 'Australia/Sydney',
-    # Canada
-    'ontario': 'America/Toronto', 'on': 'America/Toronto',
-    'ottawa': 'America/Toronto',
-    'toronto': 'America/Toronto',
 }
 
 
@@ -171,7 +167,7 @@ def derive_company_industry(company_name: str) -> str:
 
 
 def is_vendor_name(company_name: str) -> bool:
-    """Vendor detection."""
+    """Vendor detection using imported KNOWN_VENDOR_NAMES."""
     if not company_name or not isinstance(company_name, str):
         return False
     
@@ -235,7 +231,7 @@ def normalize_company_name(name: str) -> str:
 
 
 def normalize_product(product: str) -> str | None:
-    """Normalize product."""
+    """Normalize product using imported PRODUCT_ALIASES."""
     if not product or not isinstance(product, str):
         return None
     
@@ -343,7 +339,7 @@ def populate_company_industries(data: dict) -> dict:
 
 
 def backfill_project_via_vendor(data: dict) -> dict:
-    """Backfill via_vendor."""
+    """Backfill via_vendor for client projects."""
     for exp in data.get("experiences", []):
         vendor = exp.get("vendor_consulting_firm")
         if vendor:
@@ -403,14 +399,6 @@ def compute_companies_summary(data: dict) -> dict:
             vendor_name = normalize_company_name(exp["vendor_consulting_firm"])
             vendors.add(vendor_name)
         
-        if exp.get("company_is_sfdc_client") == "TRUE" and exp.get("company_name"):
-            if exp.get("products"):  # Only if products exist
-                clients.add(exp["company_name"])
-        
-        for cp in exp.get("client_projects", []):
-            if cp.get("products"):  # Only if products exist
-                clients.add(cp["project_end_client_name"])
-
         if exp.get("company_name"):
             company_name = normalize_company_name(exp["company_name"])
             if is_vendor_name(company_name):
